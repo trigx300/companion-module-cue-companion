@@ -1,0 +1,33 @@
+{
+	"name": "companion-module-cue-companion",
+	"version": "1.0.0",
+	"description": "Cue Companion — Show control & media cue playlist workspace for Bitfocus Companion",
+	"author": "David Giardinelli <trigx300@gmail.com>",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/trigx300/companion-module-cue-companion.git"
+	},
+	"bugs": {
+		"url": "https://github.com/trigx300/companion-module-cue-companion/issues"
+	},
+	"main": "dist/main.js",
+	"scripts": {
+		"build": "tsc",
+		"dev": "tsc -w",
+		"package": "companion-module-build"
+	},
+	"dependencies": {
+		"@companion-module/base": "1.14.0"
+	},
+	"devDependencies": {
+		"@companion-module/tools": "^1.5.0",
+		"@types/node": "^20.11.0",
+		"typescript": "^5.3.3"
+	},
+	"engines": {
+		"node": ">=18.12"
+	}
+}
+
+

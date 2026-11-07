@@ -1,0 +1,10 @@
+node_modules/
+dist/
+pkg/
+release/
+media/
+cues-workspace.json
+.stage-*/
+*.tgz
+*.zip
+.DS_Store
