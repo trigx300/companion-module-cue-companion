@@ -46,22 +46,23 @@ export function GetCueCompanionWebUiHtml(): string {
 	.top-bar {
 		display: flex;
 		align-items: center;
-		gap: 14px;
-		padding: 10px 14px;
+		gap: 10px;
+		padding: 8px 12px;
 		background: linear-gradient(180deg, #2b2e37 0%, #1f2127 100%);
 		border-bottom: 1px solid #0e0f12;
 		box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-		height: 86px;
+		min-height: 82px;
 		flex-shrink: 0;
+		flex-wrap: wrap;
 	}
 	.go-btn {
-		width: 132px;
-		height: 66px;
+		width: clamp(92px, 9vw, 132px);
+		height: 62px;
 		border-radius: 8px;
 		border: 2px solid #2ee66b;
 		background: linear-gradient(180deg, #24c95c 0%, #13883b 100%);
 		color: #ffffff;
-		font-size: 28px;
+		font-size: clamp(20px, 2vw, 28px);
 		font-weight: 800;
 		letter-spacing: 2px;
 		cursor: pointer;
@@ -74,7 +75,7 @@ export function GetCueCompanionWebUiHtml(): string {
 		flex-shrink: 0;
 	}
 	.go-btn span.sub {
-		font-size: 10px;
+		font-size: 9px;
 		font-weight: 600;
 		letter-spacing: 0.8px;
 		opacity: 0.85;
@@ -89,16 +90,17 @@ export function GetCueCompanionWebUiHtml(): string {
 	}
 
 	.standby-display {
-		flex: 1;
-		height: 66px;
+		flex: 1 1 320px;
+		min-width: 240px;
+		height: 62px;
 		background: #131519;
 		border: 1px solid #353944;
 		border-radius: 6px;
-		padding: 8px 14px;
+		padding: 6px 12px;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 16px;
+		gap: 12px;
 		overflow: hidden;
 		box-shadow: inset 0 2px 6px rgba(0,0,0,0.6);
 	}
@@ -267,12 +269,35 @@ export function GetCueCompanionWebUiHtml(): string {
 	.cue-toolbar {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		justify-content: space-between;
+		gap: 10px;
 		padding: 6px 14px;
 		background: #1c1e24;
 		border-bottom: 1px solid var(--border-color);
 		flex-shrink: 0;
 		flex-wrap: wrap;
+	}
+	.toolbar-section {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+	.toolbar-section.system-tools {
+		background: #14161b;
+		border: 1px solid #2e333d;
+		border-radius: 6px;
+		padding: 4px 8px;
+		gap: 8px;
+	}
+	.toolbar-group-label {
+		font-size: 10px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.6px;
+		color: var(--text-muted);
+		margin-right: 2px;
+		user-select: none;
 	}
 	.tool-btn {
 		padding: 5px 10px;
@@ -286,6 +311,7 @@ export function GetCueCompanionWebUiHtml(): string {
 		display: flex;
 		align-items: center;
 		gap: 5px;
+		white-space: nowrap;
 	}
 	.tool-btn:hover {
 		background: #353945;
@@ -301,24 +327,27 @@ export function GetCueCompanionWebUiHtml(): string {
 		font-size: 11px;
 		color: var(--cc-cyan);
 		font-weight: 600;
-		margin-left: auto;
+		padding-left: 4px;
 	}
 
 	/* MAIN WORKSPACE SPLIT: CUE LIST + ACTIVE CUES SIDEBAR */
 	.workspace-main {
 		flex: 1;
+		min-height: 140px;
 		display: flex;
 		overflow: hidden;
 	}
 	.cuelist-container {
 		flex: 1;
-		overflow-y: auto;
+		min-width: 0;
+		overflow: auto;
 		background: var(--bg-row);
 		position: relative;
 	}
 
 	table.cuelist {
 		width: 100%;
+		min-width: 680px;
 		border-collapse: collapse;
 		table-layout: fixed;
 	}
@@ -438,7 +467,7 @@ export function GetCueCompanionWebUiHtml(): string {
 
 	/* RIGHT SIDEBAR: ACTIVE CUES DRAWER */
 	.active-sidebar {
-		width: 295px;
+		width: clamp(220px, 22vw, 295px);
 		background: #17191e;
 		border-left: 1px solid var(--border-color);
 		display: flex;
@@ -507,7 +536,7 @@ export function GetCueCompanionWebUiHtml(): string {
 
 	/* BOTTOM INSPECTOR DRAWER */
 	.inspector {
-		height: 240px;
+		height: clamp(190px, 28vh, 255px);
 		background: var(--bg-panel);
 		border-top: 2px solid #0e0f12;
 		display: flex;
@@ -521,55 +550,109 @@ export function GetCueCompanionWebUiHtml(): string {
 		padding: 0 12px;
 		gap: 4px;
 		align-items: center;
+		flex-wrap: wrap;
 	}
 	.insp-tab {
-		padding: 7px 14px;
+		padding: 7px 12px;
 		font-size: 12px;
 		font-weight: 600;
 		color: var(--text-muted);
 		cursor: pointer;
 		border-bottom: 2px solid transparent;
+		white-space: nowrap;
 	}
 	.insp-tab.active {
 		color: #fff;
 		border-bottom-color: var(--cc-amber);
 		background: rgba(255,255,255,0.03);
 	}
+	.insp-selected-label {
+		margin-left: auto;
+		font-size: 11px;
+		color: var(--text-muted);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 42%;
+		padding: 4px 0;
+	}
 	.inspector-body {
 		flex: 1;
 		padding: 12px 16px;
 		overflow-y: auto;
+		overflow-x: hidden;
 		display: flex;
-		gap: 20px;
+		flex-wrap: wrap;
+		gap: 16px 20px;
 		align-items: flex-start;
 	}
 	.form-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
-		gap: 10px 14px;
-		flex: 1;
+		grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+		gap: 12px 16px;
+		flex: 2 1 460px;
+		min-width: 0;
+		width: 100%;
 	}
 	.field {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: 5px;
+		min-width: 0;
+	}
+	.field.span-2 {
+		grid-column: span 2;
+	}
+	@media (max-width: 680px) {
+		.field.span-2 {
+			grid-column: span 1;
+		}
 	}
 	.field label {
 		font-size: 11px;
 		color: var(--text-muted);
 		font-weight: 600;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
-	.field input, .field select {
+	.field input:not([type="color"]):not([type="checkbox"]):not([type="range"]),
+	.field select {
+		width: 100%;
+		min-width: 0;
 		background: #14161a;
 		border: 1px solid #383d48;
 		border-radius: 4px;
 		color: #fff;
-		padding: 5px 8px;
+		padding: 6px 8px;
 		font-size: 12px;
 		user-select: text;
 	}
+	.field input[type="range"] {
+		width: 100%;
+		min-width: 0;
+	}
+	.field-row {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+		width: 100%;
+		min-width: 0;
+	}
+	.field-row > select,
+	.field-row > input:not([type="color"]) {
+		flex: 1 1 0%;
+		min-width: 0;
+		width: 0;
+	}
+	.field-row > button {
+		flex-shrink: 0;
+		white-space: nowrap;
+	}
 	.waveform-box {
-		width: 440px;
+		flex: 1 1 340px;
+		min-width: 280px;
+		max-width: 100%;
 		height: 155px;
 		background: #121418;
 		border: 1px solid #333842;
@@ -577,8 +660,35 @@ export function GetCueCompanionWebUiHtml(): string {
 		display: flex;
 		flex-direction: column;
 		padding: 8px;
-		flex-shrink: 0;
 		gap: 4px;
+	}
+	@media (max-width: 960px) {
+		.active-sidebar {
+			width: 210px;
+		}
+		.standby-trt-box {
+			padding-left: 10px;
+			gap: 8px;
+		}
+		.trt-value {
+			font-size: 16px;
+		}
+	}
+	@media (max-width: 760px) {
+		.workspace-main {
+			flex-direction: column;
+		}
+		.active-sidebar {
+			width: 100%;
+			height: 115px;
+			border-left: none;
+			border-top: 1px solid var(--border-color);
+		}
+		.insp-selected-label {
+			max-width: 100%;
+			width: 100%;
+			margin-left: 0;
+		}
 	}
 	canvas#waveformCanvas, canvas#trimTimelineCanvas {
 		width: 100%;
@@ -635,6 +745,8 @@ export function GetCueCompanionWebUiHtml(): string {
 		border-radius: 8px;
 		width: 560px;
 		max-width: 94vw;
+		max-height: 90vh;
+		overflow-y: auto;
 		padding: 16px;
 		box-shadow: 0 20px 50px rgba(0,0,0,0.7);
 		display: flex;
@@ -643,6 +755,8 @@ export function GetCueCompanionWebUiHtml(): string {
 	}
 	.screen-item {
 		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
 		align-items: center;
 		justify-content: space-between;
 		background: #13161b;
@@ -727,6 +841,39 @@ export function GetCueCompanionWebUiHtml(): string {
 		</div>
 	</div>
 
+	<!-- PROJECT SAVE / OPEN / IMPORT / EXPORT MODAL -->
+	<div class="screen-Modal" id="projectManagerModal">
+		<div class="screen-modal-card" style="width:580px;">
+			<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2e3440;padding-bottom:8px;">
+				<div style="font-weight:700;font-size:14px;">💾 Project Manager — Save & Open Shows</div>
+				<button class="tool-btn" onclick="closeProjectModal()">✕ Close</button>
+			</div>
+
+			<div style="background:#13161b;border:1px solid #2e3440;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+				<div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;">Current Project Name</div>
+				<div style="display:flex;gap:8px;align-items:center;">
+					<input type="text" id="projectNameInput" value="Untitled Show" placeholder="Enter show / project name..." style="flex:1;background:#1c1f26;border:1px solid #3b4252;color:#fff;padding:7px 10px;border-radius:5px;font-size:13px;font-weight:600;" />
+					<button class="tool-btn" style="background:#14532d;border-color:#22c55e;font-weight:700;padding:7px 14px;" onclick="saveCurrentProject()">💾 Save Project</button>
+					<button class="tool-btn" style="background:#172b3a;border-color:#06b6d4;padding:7px 12px;" onclick="exportProjectFile()" title="Download .cueproj.json file to your computer">⬇️ Export File</button>
+				</div>
+			</div>
+
+			<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+				<div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;">Saved Projects on Server</div>
+				<div style="display:flex;gap:6px;">
+					<label class="tool-btn" style="cursor:pointer;background:#1e293b;border-color:#38bdf8;">
+						📂 Open / Import File (.json)...
+						<input type="file" id="projectImportInput" accept=".json,.cueproj" style="display:none;" onchange="importProjectFile(this)" />
+					</label>
+					<button class="tool-btn" onclick="createNewProject('empty')" title="Start a clean empty cue list">📄 New Empty Show</button>
+					<button class="tool-btn" onclick="createNewProject('demo')" title="Load the default demo cue list">✨ Load Demo Show</button>
+				</div>
+			</div>
+
+			<div id="savedProjectsList" style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto;"></div>
+		</div>
+	</div>
+
 	<!-- VIDEO DISPLAY / MULTISCREEN ROUTING MODAL -->
 	<div class="screen-Modal" id="screenManagerModal">
 		<div class="screen-modal-card">
@@ -750,9 +897,9 @@ export function GetCueCompanionWebUiHtml(): string {
 
 	<!-- TOP CUE COMPANION HEADER -->
 	<div class="top-bar">
-		<div style="display:flex;flex-direction:column;justify-content:center;padding-right:6px;border-right:1px solid #383d48;">
+		<div style="display:flex;flex-direction:column;justify-content:center;padding-right:8px;border-right:1px solid #383d48;">
 			<div style="font-size:15px;font-weight:900;letter-spacing:0.6px;color:#fff;white-space:nowrap;">🎬 CUE COMPANION</div>
-			<div style="font-size:10px;color:var(--cc-cyan);font-weight:700;letter-spacing:0.5px;">SHOW CONTROL ENGINE</div>
+			<div style="font-size:10px;color:var(--cc-cyan);font-weight:700;letter-spacing:0.5px;">📁 <span id="topProjectNameLabel">Untitled Show</span></div>
 		</div>
 		<button class="go-btn" id="goBtn" onclick="sendTransport('go')" title="Shortcut: Spacebar">
 			GO
@@ -815,30 +962,37 @@ export function GetCueCompanionWebUiHtml(): string {
 		</div>
 	</div>
 
-	<!-- CUE CREATION TOOLBAR -->
+	<!-- CUE CREATION & PROJECT / OUTPUT TOOLBAR -->
 	<div class="cue-toolbar">
-		<button class="tool-btn" onclick="addCue('audio')">🔊 + Audio</button>
-		<button class="tool-btn" onclick="addCue('video')">🎬 + Video</button>
-		<button class="tool-btn" style="background:#1e293b;border-color:#38bdf8;" onclick="openBgCreatorModal(null)" title="Add solid color or gradient background to playlist">🎨 + Background</button>
-		<button class="tool-btn" onclick="addCue('companion')">🎛️ + Companion Btn</button>
-		<button class="tool-btn" onclick="addCue('fade')" title="Auto-targets selected cue">📈 + Fade</button>
-		<button class="tool-btn" onclick="addCue('stop')" title="Auto-targets selected cue">🛑 + Stop</button>
-		<button class="tool-btn" onclick="addCue('wait')">⏱️ + Wait</button>
-		<button class="tool-btn" onclick="addCue('group')" id="groupToolBtn" title="Select multiple cues with Shift+Click or Shift+Arrows, then click to wrap in Group!">📁 + Group</button>
-		<button class="tool-btn" onclick="addCue('network')">🌐 + Network</button>
-		<button class="tool-btn" onclick="addCue('goto')" title="Auto-targets selected cue">↪️ + Goto</button>
-		<div class="tool-sep"></div>
-		<button class="tool-btn" onclick="moveSelectedCue(-1)">⬆️ Move Up</button>
-		<button class="tool-btn" onclick="moveSelectedCue(1)">⬇️ Move Down</button>
-		<button class="tool-btn" onclick="duplicateSelectedCue()">📋 Duplicate</button>
-		<button class="tool-btn" style="color:#ff8a8a;" onclick="deleteSelectedCue()">🗑️ Delete</button>
-		<div class="tool-sep"></div>
-		<label class="tool-btn" style="cursor:pointer;">
-			📂 Upload Audio/Video
-			<input type="file" id="mediaUploadInput" accept="audio/*,video/*" style="display:none;" onchange="uploadMediaFile(this)" />
-		</label>
-		<button class="tool-btn" style="background:#172b3a;border-color:#06b6d4;" onclick="openScreenModal()">🖥️ Video Output & Screens</button>
-		<span class="sel-badge" id="selCountBadge"></span>
+		<div class="toolbar-section">
+			<span class="toolbar-group-label">Cue List:</span>
+			<button class="tool-btn" onclick="addCue('audio')">🔊 + Audio</button>
+			<button class="tool-btn" onclick="addCue('video')">🎬 + Video</button>
+			<button class="tool-btn" style="background:#1e293b;border-color:#38bdf8;" onclick="openBgCreatorModal(null)" title="Add solid color or gradient background to playlist">🎨 + Background</button>
+			<button class="tool-btn" onclick="addCue('companion')">🎛️ + Companion Btn</button>
+			<button class="tool-btn" onclick="addCue('fade')" title="Auto-targets selected cue">📈 + Fade</button>
+			<button class="tool-btn" onclick="addCue('stop')" title="Auto-targets selected cue">🛑 + Stop</button>
+			<button class="tool-btn" onclick="addCue('wait')">⏱️ + Wait</button>
+			<button class="tool-btn" onclick="addCue('group')" id="groupToolBtn" title="Select multiple cues with Shift+Click or Shift+Arrows, then click to wrap in Group!">📁 + Group</button>
+			<button class="tool-btn" onclick="addCue('network')">🌐 + Network</button>
+			<button class="tool-btn" onclick="addCue('goto')" title="Auto-targets selected cue">↪️ + Goto</button>
+			<div class="tool-sep"></div>
+			<button class="tool-btn" onclick="moveSelectedCue(-1)" title="Move Selected Up">⬆️ Up</button>
+			<button class="tool-btn" onclick="moveSelectedCue(1)" title="Move Selected Down">⬇️ Down</button>
+			<button class="tool-btn" onclick="duplicateSelectedCue()">📋 Duplicate</button>
+			<button class="tool-btn" style="color:#ff8a8a;" onclick="deleteSelectedCue()">🗑️ Delete</button>
+			<span class="sel-badge" id="selCountBadge"></span>
+		</div>
+
+		<div class="toolbar-section system-tools">
+			<span class="toolbar-group-label">Project & Setup:</span>
+			<label class="tool-btn" style="cursor:pointer;" title="Upload audio or video media files to use in cues">
+				📂 Upload Media
+				<input type="file" id="mediaUploadInput" accept="audio/*,video/*" style="display:none;" onchange="uploadMediaFile(this)" />
+			</label>
+			<button class="tool-btn" style="background:#172b3a;border-color:#06b6d4;" onclick="openScreenModal()" title="Configure Video Stage Output & Multi-Screen Assignment">🖥️ Video Output & Screens</button>
+			<button class="tool-btn" style="background:#14532d;border-color:#22c55e;font-weight:700;" onclick="openProjectModal()" title="Save, Open, Import or Export Show Project (Ctrl+S)">💾 Save / Open Project</button>
+		</div>
 	</div>
 
 	<!-- MAIN CUE TABLE + ACTIVE CUES CART -->
@@ -876,14 +1030,16 @@ export function GetCueCompanionWebUiHtml(): string {
 		<div class="inspector-tabs">
 			<div class="insp-tab active" onclick="switchTab('basics', this)">Basics & Target</div>
 			<div class="insp-tab" onclick="switchTab('timing', this)">Timeline Crop, Scrub & Loops</div>
-			<div class="insp-tab" onclick="switchTab('levels', this)">Levels, Visuals & Displays</div>
-			<div style="margin-left:auto;font-size:11px;color:var(--text-muted);" id="inspSelectedTitle">No Cue Selected</div>
+			<div class="insp-tab" onclick="switchTab('levels', this)">Levels & Envelope</div>
+			<div class="insp-selected-label" id="inspSelectedTitle">No Cue Selected</div>
 		</div>
 		<div class="inspector-body" id="inspectorContent"></div>
 	</div>
 
 <script>
 	let cues = [];
+	let projectName = 'Untitled Show';
+	let savedProjects = [];
 	let mediaFiles = [];
 	let standbyCueId = null;
 	let selectedCueId = null;
@@ -904,10 +1060,7 @@ export function GetCueCompanionWebUiHtml(): string {
 	const selectedStageScreenIndices = new Set([0]);
 	const stageBc = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('cue_companion_stage_channel') : null;
 
-	function broadcastToStage(msg) {
-		if (stageBc) {
-			try { stageBc.postMessage(msg); } catch {}
-		}
+	function broadcastToStage(msg, skipServer = false) {
 		for (const [idx, win] of stageWindows.entries()) {
 			if (win && !win.closed) {
 				try { win.postMessage(msg, '*'); } catch {}
@@ -915,11 +1068,16 @@ export function GetCueCompanionWebUiHtml(): string {
 				stageWindows.delete(idx);
 			}
 		}
-		fetch('/api/stage/broadcast', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ message: msg })
-		}).catch(() => {});
+		if (!skipServer) {
+			if (stageBc) {
+				try { stageBc.postMessage(msg); } catch {}
+			}
+			fetch('/api/stage/broadcast', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ message: msg })
+			}).catch(() => {});
+		}
 	}
 
 	async function detectDisplays(requestPermission = false) {
@@ -1286,27 +1444,33 @@ export function GetCueCompanionWebUiHtml(): string {
 					pauseAtEnd,
 					volume: 0, // Audio is routed through WebAudio master bus in workspace
 					targetScreens: cue.targetScreens || 'all'
-				});
+				}, true);
 			}
-			const mediaEl = new Audio(url);
-			mediaEl.crossOrigin = 'anonymous';
-			mediaEl.loop = false; // Handled manually so startTime/endTime crop points work seamlessly
-			mediaEl.currentTime = startSec;
-			mediaEl.ontimeupdate = () => {
-				if (endSec > startSec && mediaEl.currentTime >= endSec) {
-					if (isLoop) {
-						mediaEl.currentTime = startSec;
-						mediaEl.play().catch(() => {});
-					} else {
-						mediaEl.pause();
-						mediaEl.currentTime = startSec;
+			try {
+				const mediaEl = new Audio(url);
+				mediaEl.crossOrigin = 'anonymous';
+				mediaEl.loop = false; // Handled manually so startTime/endTime crop points work seamlessly
+				mediaEl.onloadedmetadata = () => {
+					try { mediaEl.currentTime = startSec; } catch {}
+				};
+				mediaEl.ontimeupdate = () => {
+					if (endSec > startSec && mediaEl.currentTime >= endSec) {
+						if (isLoop) {
+							mediaEl.currentTime = startSec;
+							mediaEl.play().catch(() => {});
+						} else {
+							mediaEl.pause();
+							mediaEl.currentTime = startSec;
+						}
 					}
-				}
-			};
-			const srcNode = audioCtx.createMediaElementSource(mediaEl);
-			srcNode.connect(gainNode);
-			mediaEl.play().catch(e => console.warn('Audio play blocked until user click:', e));
-			activeAudioNodes.set(cue.id, { mediaEl, gainNode, panNode, cueType: cue.type, startSec });
+				};
+				const srcNode = audioCtx.createMediaElementSource(mediaEl);
+				srcNode.connect(gainNode);
+				mediaEl.play().catch(e => console.warn('Audio play blocked until user click:', e));
+				activeAudioNodes.set(cue.id, { mediaEl, gainNode, panNode, cueType: cue.type, startSec });
+			} catch (err) {
+				activeAudioNodes.set(cue.id, { gainNode, panNode, cueType: cue.type, startSec });
+			}
 		}
 	}
 
@@ -1320,7 +1484,7 @@ export function GetCueCompanionWebUiHtml(): string {
 		}
 		const cue = cues.find(c => c.id === cueId);
 		if (cue && cue.type === 'video') {
-			broadcastToStage({ type: 'pause_video', cueId, heldAtLastFrame: !!cue.heldAtLastFrame });
+			broadcastToStage({ type: 'pause_video', cueId, heldAtLastFrame: !!cue.heldAtLastFrame }, true);
 		}
 	}
 
@@ -1338,7 +1502,7 @@ export function GetCueCompanionWebUiHtml(): string {
 			entry.mediaEl.play().catch(() => {});
 		}
 		if (cue.type === 'video') {
-			broadcastToStage({ type: 'resume_video', cueId: cue.id });
+			broadcastToStage({ type: 'resume_video', cueId: cue.id }, true);
 		}
 	}
 
@@ -1346,13 +1510,13 @@ export function GetCueCompanionWebUiHtml(): string {
 		const entry = activeAudioNodes.get(cueId);
 		const cue = cues.find(c => c.id === cueId);
 		if (entry && entry.isBackground) {
-			broadcastToStage({ type: 'clear_background', cueId });
+			broadcastToStage({ type: 'clear_background', cueId }, true);
 			activeAudioNodes.delete(cueId);
 			return;
 		}
 		if (!entry) {
 			if (cue && cue.type === 'video') {
-				broadcastToStage({ type: 'stop_video', cueId, resetTime: Number(cue.startTime) || 0 });
+				broadcastToStage({ type: 'stop_video', cueId, resetTime: Number(cue.startTime) || 0 }, true);
 			}
 			return;
 		}
@@ -1367,7 +1531,7 @@ export function GetCueCompanionWebUiHtml(): string {
 		} catch {}
 		activeAudioNodes.delete(cueId);
 		if (!cue || cue.type === 'video') {
-			broadcastToStage({ type: 'stop_video', cueId, resetTime: Number(cue?.startTime || 0) });
+			broadcastToStage({ type: 'stop_video', cueId, resetTime: Number(cue?.startTime || 0) }, true);
 		}
 		if (selectedCueId === cueId && cue) {
 			previewPlayheadSec = Number(cue.startTime) || 0;
@@ -1448,7 +1612,7 @@ export function GetCueCompanionWebUiHtml(): string {
 							cueId: cue.id,
 							opacity: computeVideoOpacity(cue),
 							targetScreens: cue.targetScreens || 'all'
-						});
+						}, true);
 					}
 				}
 			}
@@ -1762,7 +1926,7 @@ export function GetCueCompanionWebUiHtml(): string {
 						<label>Cue Number (Q#)</label>
 						<input type="text" value="\${cue.qNumber}" onchange="updateCueField('\${cue.id}', 'qNumber', this.value)" />
 					</div>
-					<div class="field" style="grid-column: span 2;">
+					<div class="field span-2">
 						<label>Cue Name</label>
 						<input type="text" value="\${cue.name}" onchange="updateCueField('\${cue.id}', 'name', this.value)" />
 					</div>
@@ -1783,7 +1947,7 @@ export function GetCueCompanionWebUiHtml(): string {
 						<select onchange="updateCueField('\${cue.id}', 'parentId', this.value || null)">\${groupOptions}</select>
 					</div>
 					\${(cue.type === 'audio' || cue.type === 'video') ? \`
-					<div class="field" style="grid-column: span 2;">
+					<div class="field span-2">
 						<label>Audio / Video Source (Synth Preset or Uploaded File)</label>
 						<select onchange="onMediaSourceSelect('\${cue.id}', this.value)">
 							<option value="">-- Choose Media or Upload Above --</option>
@@ -1793,12 +1957,9 @@ export function GetCueCompanionWebUiHtml(): string {
 					\${(cue.type === 'video' || cue.type === 'background') ? \`
 					<div class="field">
 						<label style="color:var(--cc-cyan);">Target Output Screen(s)</label>
-						<div style="display:flex;gap:4px;">
-							<select style="flex:1;" onchange="updateCueField('\${cue.id}', 'targetScreens', this.value)">
-								\${screenTargetOptions}
-							</select>
-							<button class="scrubber-btn crop-btn" onclick="openScreenModal()" title="Open Multi-Screen & Fullscreen Manager">🖥️ Screens</button>
-						</div>
+						<select onchange="updateCueField('\${cue.id}', 'targetScreens', this.value)">
+							\${screenTargetOptions}
+						</select>
 					</div>\` : ''}
 					\${(cue.type === 'background') ? \`
 					<div class="field">
@@ -1811,24 +1972,24 @@ export function GetCueCompanionWebUiHtml(): string {
 					</div>
 					<div class="field">
 						<label>Primary Color</label>
-						<div style="display:flex;gap:4px;">
-							<input type="color" value="\${cue.bgColor1 || '#0f172a'}" style="width:42px;height:30px;padding:2px;cursor:pointer;" oninput="updateCueField('\${cue.id}', 'bgColor1', this.value)" />
-							<input type="text" value="\${cue.bgColor1 || '#0f172a'}" style="flex:1;" onchange="updateCueField('\${cue.id}', 'bgColor1', this.value)" />
+						<div class="field-row">
+							<input type="color" value="\${cue.bgColor1 || '#0f172a'}" style="width:42px;height:30px;padding:2px;cursor:pointer;flex-shrink:0;" oninput="updateCueField('\${cue.id}', 'bgColor1', this.value)" />
+							<input type="text" value="\${cue.bgColor1 || '#0f172a'}" onchange="updateCueField('\${cue.id}', 'bgColor1', this.value)" />
 						</div>
 					</div>
 					\${cue.bgStyle !== 'solid' ? \`
 					<div class="field">
 						<label>Secondary Gradient Color</label>
-						<div style="display:flex;gap:4px;">
-							<input type="color" value="\${cue.bgColor2 || '#1e3a8a'}" style="width:42px;height:30px;padding:2px;cursor:pointer;" oninput="updateCueField('\${cue.id}', 'bgColor2', this.value)" />
-							<input type="text" value="\${cue.bgColor2 || '#1e3a8a'}" style="flex:1;" onchange="updateCueField('\${cue.id}', 'bgColor2', this.value)" />
+						<div class="field-row">
+							<input type="color" value="\${cue.bgColor2 || '#1e3a8a'}" style="width:42px;height:30px;padding:2px;cursor:pointer;flex-shrink:0;" oninput="updateCueField('\${cue.id}', 'bgColor2', this.value)" />
+							<input type="text" value="\${cue.bgColor2 || '#1e3a8a'}" onchange="updateCueField('\${cue.id}', 'bgColor2', this.value)" />
 						</div>
 					</div>
 					<div class="field">
 						<label>Gradient Angle (\${cue.bgAngle ?? 135}°)</label>
 						<input type="range" min="0" max="360" step="5" value="\${cue.bgAngle ?? 135}" oninput="updateCueField('\${cue.id}', 'bgAngle', Number(this.value))" />
 					</div>\` : ''}
-					<div class="field" style="grid-column: span 2;">
+					<div class="field span-2">
 						<label>Live Stage Background Preview (Click to Open Designer)</label>
 						<div onclick="openBgCreatorModal('\${cue.id}')" style="height:36px;border-radius:5px;border:1px solid #475569;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;color:#fff;text-shadow:0 1px 3px #000;background:\${computeBackgroundCss(cue)};">
 							🎨 Click to Open Full Color / Gradient Picker & Presets
@@ -1849,7 +2010,7 @@ export function GetCueCompanionWebUiHtml(): string {
 						<input type="number" min="0" max="15" value="\${cue.companionCol}" onchange="updateCueField('\${cue.id}', 'companionCol', Number(this.value))" />
 					</div>\` : ''}
 					\${(cue.type === 'fade' || cue.type === 'stop' || cue.type === 'goto') ? \`
-					<div class="field" style="grid-column: span 2;">
+					<div class="field span-2">
 						<label>Target Cue</label>
 						<select onchange="updateCueField('\${cue.id}', 'targetCueId', this.value)">\${targetCueOptions}</select>
 					</div>\` : ''}
@@ -1862,11 +2023,11 @@ export function GetCueCompanionWebUiHtml(): string {
 							<option value="PUT" \${cue.networkMethod==='PUT'?'selected':''}>PUT</option>
 						</select>
 					</div>
-					<div class="field" style="grid-column: span 2;">
+					<div class="field span-2">
 						<label>Target URL</label>
 						<input type="text" value="\${cue.networkUrl || ''}" placeholder="http://10.101.10.100:8000/api/..." onchange="updateCueField('\${cue.id}', 'networkUrl', this.value)" />
 					</div>\` : ''}
-					<div class="field" style="grid-column: span 2;">
+					<div class="field span-2">
 						<label>Notes / Script Cue Line</label>
 						<input type="text" value="\${cue.notes || ''}" onchange="updateCueField('\${cue.id}', 'notes', this.value)" />
 					</div>
@@ -1885,22 +2046,22 @@ export function GetCueCompanionWebUiHtml(): string {
 				<div class="form-grid">
 					<div class="field">
 						<label>Start / Crop In (s)</label>
-						<div style="display:flex;gap:4px;">
-							<input type="number" step="0.1" min="0" max="\${et - 0.1}" value="\${st}" style="flex:1;" onchange="updateCueField('\${cue.id}', 'startTime', Number(this.value))" />
+						<div class="field-row">
+							<input type="number" step="0.1" min="0" max="\${et - 0.1}" value="\${st}" onchange="updateCueField('\${cue.id}', 'startTime', Number(this.value))" />
 							<button class="scrubber-btn crop-btn" onclick="setCropPointFromPlayhead('\${cue.id}', 'in')" title="Crop Start (In-Point) to current Scrubber Playhead">[ Set In</button>
 						</div>
 					</div>
 					<div class="field">
 						<label>End / Crop Out (s)</label>
-						<div style="display:flex;gap:4px;">
-							<input type="number" step="0.1" min="\${st + 0.1}" value="\${et}" style="flex:1;" onchange="updateCueField('\${cue.id}', 'endTime', Number(this.value))" />
+						<div class="field-row">
+							<input type="number" step="0.1" min="\${st + 0.1}" value="\${et}" onchange="updateCueField('\${cue.id}', 'endTime', Number(this.value))" />
 							<button class="scrubber-btn crop-btn" onclick="setCropPointFromPlayhead('\${cue.id}', 'out')" title="Crop End (Out-Point) to current Scrubber Playhead">Set Out ]</button>
 						</div>
 					</div>
 					<div class="field">
 						<label>Cropped Action TRT (s)</label>
-						<div style="display:flex;gap:4px;">
-							<input type="number" step="0.1" min="0.1" value="\${cue.duration}" style="flex:1;" onchange="updateCueField('\${cue.id}', 'duration', Number(this.value))" />
+						<div class="field-row">
+							<input type="number" step="0.1" min="0.1" value="\${cue.duration}" onchange="updateCueField('\${cue.id}', 'duration', Number(this.value))" />
 							<button class="scrubber-btn" onclick="resetCropPoints('\${cue.id}')" title="Reset Crop to full media duration">Reset Crop</button>
 						</div>
 					</div>
@@ -1922,9 +2083,9 @@ export function GetCueCompanionWebUiHtml(): string {
 					</div>
 					<div class="field">
 						<label>Fade In / Out (s)</label>
-						<div style="display:flex;gap:4px;">
-							<input type="number" step="0.1" min="0" value="\${cue.fadeIn || 0}" placeholder="In" style="width:50%;" onchange="updateCueField('\${cue.id}', 'fadeIn', Number(this.value))" />
-							<input type="number" step="0.1" min="0" value="\${cue.fadeOut || 0}" placeholder="Out" style="width:50%;" onchange="updateCueField('\${cue.id}', 'fadeOut', Number(this.value))" />
+						<div class="field-row">
+							<input type="number" step="0.1" min="0" value="\${cue.fadeIn || 0}" placeholder="In" onchange="updateCueField('\${cue.id}', 'fadeIn', Number(this.value))" />
+							<input type="number" step="0.1" min="0" value="\${cue.fadeOut || 0}" placeholder="Out" onchange="updateCueField('\${cue.id}', 'fadeOut', Number(this.value))" />
 						</div>
 					</div>
 					<div class="field">
@@ -1939,15 +2100,15 @@ export function GetCueCompanionWebUiHtml(): string {
 
 				<!-- INTERACTIVE TIMELINE SCRUBBER & CROP EDITOR -->
 				<div class="waveform-box">
-					<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);">
+					<div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;">
 						<span>TIMELINE SCRUBBER & IN/OUT CROP</span>
-						<span id="scrubberReadout">Playhead: \${formatTime(livePlayhead)} | Crop: [\${formatTime(st)} – \${formatTime(et)}] (TRT: \${formatTime(cue.duration)})</span>
+						<span id="scrubberReadout" style="overflow:hidden;text-overflow:ellipsis;">Playhead: \${formatTime(livePlayhead)} | Crop: [\${formatTime(st)} – \${formatTime(et)}] (TRT: \${formatTime(cue.duration)})</span>
 					</div>
 					<canvas id="trimTimelineCanvas" width="420" height="75" onmousedown="onTimelineCanvasMouseDown(event, '\${cue.id}')"></canvas>
 					<div class="scrubber-controls">
 						<button class="scrubber-btn" onclick="stepScrubPlayhead('\${cue.id}', -1.0)">-1.0s</button>
 						<button class="scrubber-btn" onclick="stepScrubPlayhead('\${cue.id}', -0.1)">-0.1s</button>
-						<input type="range" id="timelineScrubSlider" min="0" max="\${srcDur}" step="0.05" value="\${livePlayhead}" style="flex:1;" oninput="onScrubSliderInput('\${cue.id}', Number(this.value))" />
+						<input type="range" id="timelineScrubSlider" min="0" max="\${srcDur}" step="0.05" value="\${livePlayhead}" style="flex:1;min-width:0;" oninput="onScrubSliderInput('\${cue.id}', Number(this.value))" />
 						<button class="scrubber-btn" onclick="stepScrubPlayhead('\${cue.id}', 0.1)">+0.1s</button>
 						<button class="scrubber-btn" onclick="stepScrubPlayhead('\${cue.id}', 1.0)">+1.0s</button>
 					</div>
@@ -1958,27 +2119,10 @@ export function GetCueCompanionWebUiHtml(): string {
 			container.innerHTML = \`
 				<div class="form-grid">
 					\${cue.type === 'background' ? \`
-					<div class="field">
-						<label>Background Style</label>
-						<select onchange="updateCueField('\${cue.id}', 'bgStyle', this.value)">
-							<option value="solid" \${cue.bgStyle==='solid'?'selected':''}>Solid Color</option>
-							<option value="linear-gradient" \${(!cue.bgStyle || cue.bgStyle==='linear-gradient')?'selected':''}>Linear Gradient</option>
-							<option value="radial-gradient" \${cue.bgStyle==='radial-gradient'?'selected':''}>Radial Gradient</option>
-						</select>
+					<div class="field span-2">
+						<label>Background Visuals</label>
+						<div style="color:var(--text-muted);font-size:12px;padding:6px 0;">Configure background colors and gradient style in the <b>Basics & Target</b> tab.</div>
 					</div>
-					<div class="field">
-						<label>Primary Color</label>
-						<input type="color" value="\${cue.bgColor1 || '#0f172a'}" style="height:30px;padding:2px;" oninput="updateCueField('\${cue.id}', 'bgColor1', this.value)" />
-					</div>
-					\${cue.bgStyle !== 'solid' ? \`
-					<div class="field">
-						<label>Secondary Color</label>
-						<input type="color" value="\${cue.bgColor2 || '#1e3a8a'}" style="height:30px;padding:2px;" oninput="updateCueField('\${cue.id}', 'bgColor2', this.value)" />
-					</div>
-					<div class="field">
-						<label>Gradient Angle (\${cue.bgAngle ?? 135}°)</label>
-						<input type="range" min="0" max="360" step="5" value="\${cue.bgAngle ?? 135}" oninput="updateCueField('\${cue.id}', 'bgAngle', Number(this.value))" />
-					</div>\` : ''}
 					\` : \`
 					<div class="field">
 						<label>Target Volume / Fade Level (\${cue.volumeDb} dB)</label>
@@ -2000,10 +2144,6 @@ export function GetCueCompanionWebUiHtml(): string {
 					<div class="field">
 						<label>Audition Cue</label>
 						<button class="tool-btn" onclick="fireCueById('\${cue.id}')">▶ Preview / Fire This Cue</button>
-					</div>
-					<div class="field">
-						<label>Video Stage & Screens</label>
-						<button class="tool-btn" style="background:#172b3a;border-color:#06b6d4;" onclick="openScreenModal()">🖥️ Configure Screens & Fullscreen</button>
 					</div>
 				</div>
 				<div class="waveform-box">
@@ -2468,8 +2608,153 @@ export function GetCueCompanionWebUiHtml(): string {
 		videoStageWin = window.open('/stage', 'CueCompanionVideoStage', 'width=960,height=540');
 	}
 
-	// Keyboard Shortcuts (Including Shift+Arrow Multi-Select & Delete!)
+	// Project Save / Open / Import / Export Manager
+	async function refreshProjectsList() {
+		try {
+			const res = await fetch('/api/projects');
+			const data = await res.json();
+			if (data && data.ok) {
+				if (data.projectName) {
+					projectName = data.projectName;
+					const topLbl = document.getElementById('topProjectNameLabel');
+					if (topLbl) topLbl.textContent = projectName;
+					const inp = document.getElementById('projectNameInput');
+					if (inp && document.activeElement !== inp) inp.value = projectName;
+				}
+				savedProjects = Array.isArray(data.projects) ? data.projects : [];
+				renderSavedProjectsList();
+			}
+		} catch (e) {
+			console.warn('Could not load saved projects list:', e);
+		}
+	}
+
+	function openProjectModal() {
+		const inp = document.getElementById('projectNameInput');
+		if (inp) inp.value = projectName || 'Untitled Show';
+		document.getElementById('projectManagerModal').classList.add('open');
+		refreshProjectsList();
+	}
+
+	function closeProjectModal() {
+		document.getElementById('projectManagerModal').classList.remove('open');
+	}
+
+	function renderSavedProjectsList() {
+		const listEl = document.getElementById('savedProjectsList');
+		if (!listEl) return;
+		if (!savedProjects || savedProjects.length === 0) {
+			listEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:12px;text-align:center;background:#13161b;border-radius:6px;border:1px dashed #2e3440;">No saved projects yet. Enter a name above and click <b>💾 Save Project</b>, or click <b>📂 Open / Import File</b> to load a project file from disk.</div>';
+			return;
+		}
+		listEl.innerHTML = savedProjects.map(p => {
+			const dateStr = p.updatedAt ? new Date(p.updatedAt).toLocaleString() : '';
+			const safeFn = String(p.filename).replace(/'/g, "\\'");
+			return \`
+				<div class="screen-item">
+					<div>
+						<div style="font-weight:700;color:#fff;font-size:13px;">🎬 \${p.name}</div>
+						<div style="font-size:11px;color:var(--text-muted);">\${p.cueCount} cues • Saved \${dateStr} (\${p.filename})</div>
+					</div>
+					<div style="display:flex;gap:6px;align-items:center;">
+						<button class="scrubber-btn crop-btn" onclick="openSavedProject('\${safeFn}')">📂 Open</button>
+						<button class="scrubber-btn" style="color:#ff8a8a;border-color:#7f1d1d;" onclick="deleteSavedProject('\${safeFn}')">🗑️</button>
+					</div>
+				</div>
+			\`;
+		}).join('');
+	}
+
+	async function saveCurrentProject() {
+		const inp = document.getElementById('projectNameInput');
+		const name = (inp && inp.value.trim()) ? inp.value.trim() : (projectName || 'Untitled Show');
+		const data = await apiPost('/api/project/save', { projectName: name });
+		if (data && data.ok) {
+			projectName = data.projectName || name;
+			const topLbl = document.getElementById('topProjectNameLabel');
+			if (topLbl) topLbl.textContent = projectName;
+			if (Array.isArray(data.projects)) {
+				savedProjects = data.projects;
+				renderSavedProjectsList();
+			}
+		}
+	}
+
+	async function openSavedProject(filename) {
+		for (const id of activeAudioNodes.keys()) stopWebAudioForCue(id);
+		const data = await apiPost('/api/project/open', { filename });
+		if (data && data.ok) {
+			projectName = data.projectName || projectName;
+			const topLbl = document.getElementById('topProjectNameLabel');
+			if (topLbl) topLbl.textContent = projectName;
+			selectedCueIds.clear();
+			selectedCueId = null;
+			closeProjectModal();
+		}
+	}
+
+	async function deleteSavedProject(filename) {
+		const data = await apiPost('/api/project/delete', { filename });
+		if (data && Array.isArray(data.projects)) {
+			savedProjects = data.projects;
+			renderSavedProjectsList();
+		}
+	}
+
+	function exportProjectFile() {
+		window.location.href = '/api/project/export';
+	}
+
+	function importProjectFile(input) {
+		if (!input.files || !input.files[0]) return;
+		const file = input.files[0];
+		const reader = new FileReader();
+		reader.onload = async () => {
+			try {
+				const parsed = JSON.parse(String(reader.result));
+				for (const id of activeAudioNodes.keys()) stopWebAudioForCue(id);
+				const fallbackName = file.name.replace(/\.cueproj\.json$|\.json$/i, '');
+				const data = await apiPost('/api/project/open', {
+					projectName: parsed.projectName || fallbackName,
+					projectData: parsed
+				});
+				if (data && data.ok) {
+					projectName = data.projectName || parsed.projectName || fallbackName;
+					const topLbl = document.getElementById('topProjectNameLabel');
+					if (topLbl) topLbl.textContent = projectName;
+					selectedCueIds.clear();
+					selectedCueId = null;
+					closeProjectModal();
+				}
+			} catch (err) {
+				alert('Could not open project file: ' + err);
+			}
+		};
+		reader.readAsText(file);
+		input.value = '';
+	}
+
+	async function createNewProject(template) {
+		const name = template === 'demo' ? 'Demo Show' : 'Untitled Show';
+		for (const id of activeAudioNodes.keys()) stopWebAudioForCue(id);
+		const data = await apiPost('/api/project/new', { template, projectName: name });
+		if (data && data.ok) {
+			projectName = data.projectName || name;
+			const topLbl = document.getElementById('topProjectNameLabel');
+			if (topLbl) topLbl.textContent = projectName;
+			selectedCueIds.clear();
+			selectedCueId = null;
+			closeProjectModal();
+		}
+	}
+
+	// Keyboard Shortcuts (Including Shift+Arrow Multi-Select, Ctrl+S Save & Delete!)
 	window.addEventListener('keydown', (e) => {
+		if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+			e.preventDefault();
+			openProjectModal();
+			return;
+		}
 		if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
 
 		if (e.code === 'Space') {
@@ -2551,6 +2836,11 @@ export function GetCueCompanionWebUiHtml(): string {
 					return;
 				}
 				const oldCues = cues;
+				if (payload.projectName) {
+					projectName = payload.projectName;
+					const topLbl = document.getElementById('topProjectNameLabel');
+					if (topLbl) topLbl.textContent = projectName;
+				}
 				cues = payload.cues || [];
 				mediaFiles = payload.mediaFiles || [];
 				standbyCueId = payload.standbyCueId;
@@ -2663,7 +2953,7 @@ export function GetVideoStageHtml(): string {
 </head>
 <body ondblclick="enterStageFullscreen()">
 	<div id="bgLayer"></div>
-	<video id="stageVideo" playsinline></video>
+	<video id="stageVideo" muted playsinline preload="auto"></video>
 	<button id="fsButtonOverlay" onclick="enterStageFullscreen()">⛶ Enter Fullscreen</button>
 	<script>
 		const params = new URLSearchParams(window.location.search);
@@ -2671,8 +2961,12 @@ export function GetVideoStageHtml(): string {
 		const wantAutoFs = params.get('fs') === '1';
 		document.title = 'Cue Companion Stage Output - Screen ' + (Number(myScreenIdx) + 1);
 
+		function stageLog(msg) {}
+
 		const bgLayer = document.getElementById('bgLayer');
 		const vid = document.getElementById('stageVideo');
+		vid.muted = true;
+		let activeVideoCueId = null;
 		let currentVideoEndTime = 0;
 		let currentVideoStartTime = 0;
 		let currentVideoFadeIn = 0;
@@ -2680,6 +2974,10 @@ export function GetVideoStageHtml(): string {
 		let currentVideoLoop = false;
 		let currentVideoPauseAtEnd = false;
 		let cursorTimer = null;
+
+		vid.onerror = () => {
+			stageLog('VIDEO ERROR: code=' + (vid.error ? vid.error.code : 'none') + ' msg=' + (vid.error ? vid.error.message : '') + ' src=' + vid.src);
+		};
 
 		window.addEventListener('mousemove', () => {
 			document.body.classList.add('show-cursor');
@@ -2698,12 +2996,9 @@ export function GetVideoStageHtml(): string {
 		}
 
 		if (wantAutoFs) {
-			window.addEventListener('load', () => {
-				setTimeout(() => { enterStageFullscreen(); }, 200);
+			window.addEventListener('dblclick', () => {
+				enterStageFullscreen();
 			});
-			window.addEventListener('click', () => {
-				if (!document.fullscreenElement) enterStageFullscreen();
-			}, { once: true });
 		}
 
 		function isTargetedForThisScreen(targetScreens) {
@@ -2756,7 +3051,10 @@ export function GetVideoStageHtml(): string {
 
 		function handleStageMessage(msg) {
 			if (!msg || !msg.type) return;
-			if (msg.targetScreens && !isTargetedForThisScreen(msg.targetScreens)) return;
+			if (msg.targetScreens && !isTargetedForThisScreen(msg.targetScreens)) {
+				stageLog('Ignored msg ' + msg.type + ' for targetScreens=' + msg.targetScreens);
+				return;
+			}
 
 			if (msg.type === 'request_fullscreen') {
 				enterStageFullscreen();
@@ -2766,44 +3064,91 @@ export function GetVideoStageHtml(): string {
 			} else if (msg.type === 'clear_background') {
 				bgLayer.style.background = '#000000';
 			} else if (msg.type === 'play_video') {
+				stageLog('Received play_video: cueId=' + msg.cueId + ' url=' + msg.url + ' startTime=' + msg.startTime + ' opacity=' + msg.opacity);
+				activeVideoCueId = msg.cueId || null;
 				currentVideoStartTime = Number(msg.startTime) || 0;
 				currentVideoEndTime = Number(msg.endTime) || 0;
 				currentVideoFadeIn = Number(msg.fadeIn) || 0;
 				currentVideoFadeOut = Number(msg.fadeOut) || 0;
 				currentVideoLoop = !!msg.loop;
 				currentVideoPauseAtEnd = !!msg.pauseAtEnd;
+				vid.muted = true;
+				vid.volume = 0;
+				vid.loop = false;
 				vid.style.opacity = String(msg.opacity !== undefined ? msg.opacity : (currentVideoFadeIn > 0 ? 0 : 1));
 				vid.style.display = 'block';
+				const seekTo = msg.currentTime !== undefined ? Number(msg.currentTime) : currentVideoStartTime;
+				const applySeekAndPlay = () => {
+					if (activeVideoCueId !== msg.cueId) return;
+					try {
+						if (Math.abs(vid.currentTime - seekTo) > 0.15) {
+							vid.currentTime = seekTo;
+						}
+					} catch (e) {
+						stageLog('Seek error: ' + e);
+					}
+					if (msg.paused) {
+						vid.pause();
+					} else {
+						const p = vid.play();
+						if (p && p.catch) {
+							p.catch(err => stageLog('vid.play() rejected: ' + err));
+						}
+					}
+				};
 				if (vid.getAttribute('data-url') !== msg.url) {
 					vid.setAttribute('data-url', msg.url);
+					vid.addEventListener('loadedmetadata', function onMeta() {
+						vid.removeEventListener('loadedmetadata', onMeta);
+						applySeekAndPlay();
+					});
 					vid.src = msg.url;
+					const p = vid.play();
+					if (p && p.catch) p.catch(() => {});
+				} else if (vid.readyState >= 1) {
+					applySeekAndPlay();
+				} else {
+					vid.addEventListener('loadedmetadata', function onMeta() {
+						vid.removeEventListener('loadedmetadata', onMeta);
+						applySeekAndPlay();
+					});
+					const p = vid.play();
+					if (p && p.catch) p.catch(() => {});
 				}
-				vid.loop = false;
-				vid.volume = msg.volume ?? 0;
-				vid.currentTime = currentVideoStartTime;
-				vid.play().catch(() => {});
 			} else if (msg.type === 'video_opacity') {
+				if (msg.cueId && activeVideoCueId && msg.cueId !== activeVideoCueId) return;
 				if (msg.opacity !== undefined) {
 					vid.style.opacity = String(msg.opacity);
 				}
 			} else if (msg.type === 'scrub_video') {
 				if (msg.url) {
+					activeVideoCueId = msg.cueId || activeVideoCueId;
+					vid.muted = true;
 					vid.style.opacity = '1';
 					vid.style.display = 'block';
 					if (vid.getAttribute('data-url') !== msg.url) {
 						vid.setAttribute('data-url', msg.url);
 						vid.src = msg.url;
 					}
-					vid.currentTime = Number(msg.currentTime) || 0;
+					try { vid.currentTime = Number(msg.currentTime) || 0; } catch {}
 				}
 			} else if (msg.type === 'pause_video') {
+				if (msg.cueId && activeVideoCueId && msg.cueId !== activeVideoCueId) return;
 				vid.pause();
 			} else if (msg.type === 'resume_video') {
+				if (msg.cueId && activeVideoCueId && msg.cueId !== activeVideoCueId) return;
+				vid.muted = true;
 				vid.style.display = 'block';
-				vid.play().catch(() => {});
+				vid.play().catch(err => stageLog('resume play rejected: ' + err));
 			} else if (msg.type === 'stop_video') {
+				if (msg.cueId && activeVideoCueId && msg.cueId !== activeVideoCueId) {
+					stageLog('Ignored stop_video for older cueId=' + msg.cueId + ' (active=' + activeVideoCueId + ')');
+					return;
+				}
+				stageLog('Stopping video cueId=' + msg.cueId);
+				activeVideoCueId = null;
 				vid.pause();
-				vid.currentTime = Number(msg.resetTime) || currentVideoStartTime || 0;
+				try { vid.currentTime = Number(msg.resetTime) || currentVideoStartTime || 0; } catch {}
 				vid.style.opacity = '0';
 				vid.style.display = 'none';
 			}

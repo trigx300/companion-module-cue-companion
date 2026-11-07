@@ -1,4 +1,27 @@
-import { SomeCompanionConfigField, Regex } from '@companion-module/base'
+import { SomeCompanionConfigField } from '@companion-module/base'
+import os from 'os'
+
+export function DetectLocalIpAddress(): string {
+	const interfaces = os.networkInterfaces()
+	for (const name of Object.keys(interfaces)) {
+		const ifaceList = interfaces[name]
+		if (!ifaceList) continue
+		for (const iface of ifaceList) {
+			if (iface.family === 'IPv4' && !iface.internal && !iface.address.startsWith('169.254.')) {
+				return iface.address
+			}
+		}
+	}
+	return '127.0.0.1'
+}
+
+export function ResolveCompanionHost(configuredHost?: string): string {
+	const raw = (configuredHost || '').trim().toLowerCase()
+	if (!raw || raw === 'auto' || raw === '10.101.10.100') {
+		return DetectLocalIpAddress()
+	}
+	return configuredHost!.trim()
+}
 
 export interface CueCompanionConfig {
 	webPort: number
@@ -9,7 +32,8 @@ export interface CueCompanionConfig {
 }
 
 export function GetConfigFields(config?: Partial<CueCompanionConfig>): SomeCompanionConfigField[] {
-	const host = config?.companionHost || '10.101.10.100'
+	const detectedIp = DetectLocalIpAddress()
+	const host = ResolveCompanionHost(config?.companionHost)
 	const port = config?.webPort || 8090
 	const uiUrl = `http://${host}:${port}`
 
@@ -54,10 +78,9 @@ export function GetConfigFields(config?: Partial<CueCompanionConfig>): SomeCompa
 		{
 			type: 'textinput',
 			id: 'companionHost',
-			label: 'Companion Host IP (for Companion Button Cues)',
+			label: `Companion Host IP (Auto-detected: ${detectedIp} — edit to override)`,
 			width: 6,
-			default: '10.101.10.100',
-			regex: Regex.IP,
+			default: detectedIp,
 		},
 		{
 			type: 'number',

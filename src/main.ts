@@ -4,7 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { execFile, spawn, ChildProcess } from 'child_process'
-import { CueCompanionConfig, GetConfigFields } from './config'
+import { CueCompanionConfig, GetConfigFields, DetectLocalIpAddress, ResolveCompanionHost } from './config'
 import { Cue, CueType, CreateDefaultDemoCues } from './types'
 import { GetActions } from './actions'
 import { GetFeedbacks } from './feedbacks'
@@ -26,6 +26,7 @@ export interface DetectedDisplay {
 export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 	public config!: CueCompanionConfig
 	public cues: Cue[] = []
+	public projectName = 'Untitled Show'
 	public standbyCueId: string | null = null
 	public isPaused = false
 	public masterVolumeDb = 0
@@ -51,30 +52,61 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 	private panicElapsed = 0
 	private dataDir: string
 	private mediaDir: string
+	private projectsDir: string
 	private showFilePath: string
 
 	constructor(internal: unknown) {
 		super(internal)
 		const devDir = 'C:\\Users\\trigx300\\.gemini\\antigravity\\scratch\\companion-module-cue-companion'
 		const defaultUserDir = path.join(os.homedir(), '.cue-companion')
-		if (fs.existsSync(devDir)) {
-			this.dataDir = devDir
-		} else {
-			this.dataDir = defaultUserDir
-			try {
-				if (!fs.existsSync(this.dataDir)) {
-					fs.mkdirSync(this.dataDir, { recursive: true })
-				}
-			} catch {
-				this.dataDir = path.resolve(__dirname, '..')
+		this.dataDir = defaultUserDir
+		try {
+			if (!fs.existsSync(this.dataDir)) {
+				fs.mkdirSync(this.dataDir, { recursive: true })
+			}
+		} catch {
+			this.dataDir = path.join(os.tmpdir(), 'cue-companion-data')
+			if (!fs.existsSync(this.dataDir)) {
+				fs.mkdirSync(this.dataDir, { recursive: true })
 			}
 		}
 		this.mediaDir = path.join(this.dataDir, 'media')
+		this.projectsDir = path.join(this.dataDir, 'projects')
 		this.showFilePath = path.join(this.dataDir, 'cues-workspace.json')
+
+		// Migrate any existing workspace & media files from the dev directory so Companion's dev watcher never reloads on saves/uploads
+		try {
+			if (!fs.existsSync(this.mediaDir)) {
+				fs.mkdirSync(this.mediaDir, { recursive: true })
+			}
+			if (!fs.existsSync(this.projectsDir)) {
+				fs.mkdirSync(this.projectsDir, { recursive: true })
+			}
+			const devShow = path.join(devDir, 'cues-workspace.json')
+			if (fs.existsSync(devShow) && !fs.existsSync(this.showFilePath)) {
+				fs.copyFileSync(devShow, this.showFilePath)
+			}
+			const devMedia = path.join(devDir, 'media')
+			if (fs.existsSync(devMedia)) {
+				for (const f of fs.readdirSync(devMedia)) {
+					if (f.startsWith('.')) continue
+					const src = path.join(devMedia, f)
+					const dst = path.join(this.mediaDir, f)
+					if (!fs.existsSync(dst) && fs.statSync(src).isFile()) {
+						fs.copyFileSync(src, dst)
+					}
+				}
+			}
+		} catch {}
 	}
 
 	async init(config: CueCompanionConfig): Promise<void> {
 		this.config = config
+		const rawHost = (this.config.companionHost || '').trim().toLowerCase()
+		if (!rawHost || rawHost === 'auto' || rawHost === '10.101.10.100') {
+			this.config.companionHost = DetectLocalIpAddress()
+			this.saveConfig(this.config)
+		}
 
 		if (!fs.existsSync(this.mediaDir)) {
 			fs.mkdirSync(this.mediaDir, { recursive: true })
@@ -109,6 +141,11 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 	}
 
 	async configUpdated(config: CueCompanionConfig): Promise<void> {
+		const rawHost = (config.companionHost || '').trim().toLowerCase()
+		if (!rawHost || rawHost === 'auto') {
+			config.companionHost = DetectLocalIpAddress()
+			this.saveConfig(config)
+		}
 		const portChanged = this.config?.webPort !== config.webPort
 		this.config = config
 		if (portChanged) {
@@ -121,40 +158,8 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		return GetConfigFields(this.config)
 	}
 
-	private loadWorkspaceFromDisk(): void {
-		try {
-			if (fs.existsSync(this.showFilePath)) {
-				const raw = fs.readFileSync(this.showFilePath, 'utf8')
-				const parsed = JSON.parse(raw)
-				if (Array.isArray(parsed.cues) && parsed.cues.length > 0) {
-					this.cues = parsed.cues.map((c: Cue) => ({
-						...c,
-						sourceDuration: Number(c.sourceDuration) || Number(c.endTime) || Number(c.duration) || 0,
-						startTime: Number(c.startTime) || 0,
-						endTime: Number(c.endTime) || Number(c.duration) || 0,
-						loopMode: c.loopMode || (c.loop ? 'infinite_loop' : 'one_shot'),
-						bgStyle: c.bgStyle || 'linear-gradient',
-						bgColor1: c.bgColor1 || '#0f172a',
-						bgColor2: c.bgColor2 || '#1e3a8a',
-						bgAngle: c.bgAngle !== undefined ? Number(c.bgAngle) : 135,
-						targetScreens: c.targetScreens || 'all',
-						pauseAtTime: Number(c.pauseAtTime) || 0,
-						state: 'idle',
-						preWaitElapsed: 0,
-						actionElapsed: 0,
-						postWaitElapsed: 0,
-						pauseAtTimeTriggered: false,
-						heldAtLastFrame: false,
-					}))
-					this.standbyCueId = parsed.standbyCueId || this.cues[0]?.id || null
-					return
-				}
-			}
-		} catch (err) {
-			this.log('warn', `Failed to load saved show file, loading default demo show: ${err}`)
-		}
-
-		this.cues = CreateDefaultDemoCues().map((c) => ({
+	private normalizeLoadedCue(c: Cue): Cue {
+		return {
 			...c,
 			sourceDuration: Number(c.sourceDuration) || Number(c.endTime) || Number(c.duration) || 0,
 			startTime: Number(c.startTime) || 0,
@@ -172,32 +177,87 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			postWaitElapsed: 0,
 			pauseAtTimeTriggered: false,
 			heldAtLastFrame: false,
-		}))
+		}
+	}
+
+	private loadWorkspaceFromDisk(): void {
+		try {
+			if (fs.existsSync(this.showFilePath)) {
+				const raw = fs.readFileSync(this.showFilePath, 'utf8')
+				const parsed = JSON.parse(raw)
+				if (Array.isArray(parsed.cues) && parsed.cues.length > 0) {
+					this.projectName = parsed.projectName || 'Untitled Show'
+					this.cues = parsed.cues.map((c: Cue) => this.normalizeLoadedCue(c))
+					this.standbyCueId = parsed.standbyCueId || this.cues[0]?.id || null
+					return
+				}
+			}
+		} catch (err) {
+			this.log('warn', `Failed to load saved show file, loading default demo show: ${err}`)
+		}
+
+		this.projectName = 'Demo Show'
+		this.cues = CreateDefaultDemoCues().map((c) => this.normalizeLoadedCue(c))
 		this.standbyCueId = this.cues[0]?.id || null
 		this.saveWorkspaceToDisk()
 	}
 
+	private getSerializedWorkspacePayload(customName?: string): Record<string, any> {
+		const cleanCues = this.cues.map((c) => {
+			const copy = { ...c }
+			delete copy.state
+			delete copy.preWaitElapsed
+			delete copy.actionElapsed
+			delete copy.postWaitElapsed
+			delete copy.currentVolumeDb
+			delete copy.fadeStartVolumeDb
+			delete copy.pauseAtTimeTriggered
+			delete copy.heldAtLastFrame
+			return copy
+		})
+		return {
+			projectName: customName || this.projectName || 'Untitled Show',
+			savedAt: new Date().toISOString(),
+			standbyCueId: this.standbyCueId,
+			masterVolumeDb: this.masterVolumeDb,
+			cues: cleanCues,
+		}
+	}
+
 	private saveWorkspaceToDisk(): void {
 		try {
-			const cleanCues = this.cues.map((c) => {
-				const copy = { ...c }
-				delete copy.state
-				delete copy.preWaitElapsed
-				delete copy.actionElapsed
-				delete copy.postWaitElapsed
-				delete copy.currentVolumeDb
-				delete copy.fadeStartVolumeDb
-				delete copy.pauseAtTimeTriggered
-				delete copy.heldAtLastFrame
-				return copy
-			})
-			fs.writeFileSync(
-				this.showFilePath,
-				JSON.stringify({ standbyCueId: this.standbyCueId, cues: cleanCues }, null, 2),
-				'utf8'
-			)
+			const payload = this.getSerializedWorkspacePayload()
+			fs.writeFileSync(this.showFilePath, JSON.stringify(payload, null, 2), 'utf8')
 		} catch (err) {
 			this.log('debug', `Could not save workspace: ${err}`)
+		}
+	}
+
+	private getSavedProjectsList(): Array<{ name: string; filename: string; updatedAt: string; cueCount: number }> {
+		try {
+			if (!fs.existsSync(this.projectsDir)) return []
+			const files = fs.readdirSync(this.projectsDir).filter((f) => f.endsWith('.json'))
+			const list = files.map((filename) => {
+				const fullPath = path.join(this.projectsDir, filename)
+				const stat = fs.statSync(fullPath)
+				let name = filename.replace(/\.cueproj\.json$|\.json$/i, '')
+				let cueCount = 0
+				try {
+					const parsed = JSON.parse(fs.readFileSync(fullPath, 'utf8'))
+					if (parsed.projectName) name = parsed.projectName
+					if (Array.isArray(parsed.cues)) cueCount = parsed.cues.length
+				} catch {}
+				return {
+					name,
+					filename,
+					updatedAt: stat.mtime.toISOString(),
+					cueCount,
+				}
+			})
+			list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+			return list
+		} catch {
+			return []
 		}
 	}
 
@@ -257,6 +317,13 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 
 		if (standby && standby.state === 'paused' && !standby.heldAtLastFrame) {
 			standby.state = 'running'
+			if (standby.type === 'video') {
+				this.broadcastStageEvent({
+					type: 'resume_video',
+					cueId: standby.id,
+					targetScreens: standby.targetScreens || 'all',
+				})
+			}
 			if (this.config.autoAdvancePlayhead !== false) {
 				this.advancePlayheadFrom(standby.id)
 			}
@@ -320,9 +387,16 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		if (!cue.armed) return
 
 		// If cue is currently paused (e.g. via Pause at Time), firing it resumes from where it paused!
-		if (cue.state === 'paused') {
+		if (cue.state === 'paused' && !cue.heldAtLastFrame) {
 			this.log('info', `Resuming Paused Cue Q ${cue.qNumber}: ${cue.name}`)
 			cue.state = 'running'
+			if (cue.type === 'video') {
+				this.broadcastStageEvent({
+					type: 'resume_video',
+					cueId: cue.id,
+					targetScreens: cue.targetScreens || 'all',
+				})
+			}
 			return
 		}
 
@@ -342,11 +416,82 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		}
 	}
 
+	private computeBackgroundCss(cue: Cue): string {
+		const c1 = cue.bgColor1 || '#0f172a'
+		const c2 = cue.bgColor2 || '#1e3a8a'
+		const angle = cue.bgAngle !== undefined ? cue.bgAngle : 135
+		if (cue.bgStyle === 'solid') return c1
+		if (cue.bgStyle === 'radial-gradient') return `radial-gradient(circle, ${c1} 0%, ${c2} 100%)`
+		return `linear-gradient(${angle}deg, ${c1} 0%, ${c2} 100%)`
+	}
+
+	private computeVideoOpacity(cue: Cue): number {
+		const dur = Number(cue.duration) || 0
+		const elapsed = Number(cue.actionElapsed) || 0
+		const fadeIn = Number(cue.fadeIn) || 0
+		const fadeOut = Number(cue.fadeOut) || 0
+		const isLoop = cue.loopMode === 'infinite_loop' || !!cue.loop
+		let op = 1.0
+
+		if (fadeIn > 0 && elapsed < fadeIn) {
+			op = Math.max(0, Math.min(1, elapsed / fadeIn))
+		}
+		if (!isLoop && fadeOut > 0 && dur > 0) {
+			const rem = dur - elapsed
+			if (rem <= fadeOut) {
+				op = Math.min(op, Math.max(0, rem / fadeOut))
+			}
+		}
+		if (cue.currentVolumeDb !== undefined && cue.volumeDb !== undefined && cue.currentVolumeDb < cue.volumeDb - 0.5) {
+			const span = Math.max(1, (cue.volumeDb ?? 0) - -60)
+			const faderRatio = Math.max(0, Math.min(1, (cue.currentVolumeDb - -60) / span))
+			op = Math.min(op, faderRatio)
+		}
+		return Number(op.toFixed(3))
+	}
+
 	private beginCueAction(cue: Cue): void {
 		cue.state = 'running'
 		cue.actionElapsed = 0
 
 		switch (cue.type) {
+			case 'video': {
+				const fp = cue.filePath || ''
+				if (fp && !fp.startsWith('synth:')) {
+					const url = fp.startsWith('http') || fp.startsWith('/') ? fp : `/media/${encodeURIComponent(fp)}`
+					const startSec = Number(cue.startTime) || 0
+					const endSec = Number(cue.endTime) || Number(cue.duration) || 0
+					const isLoop = cue.loopMode === 'infinite_loop' || !!cue.loop
+					const pauseAtEnd = cue.loopMode === 'pause_at_end'
+					const initOpacity = (Number(cue.fadeIn) || 0) > 0 ? 0 : 1
+					this.broadcastStageEvent({
+						type: 'play_video',
+						cueId: cue.id,
+						url,
+						startTime: startSec,
+						endTime: endSec,
+						duration: Number(cue.duration) || endSec - startSec || 5,
+						fadeIn: Number(cue.fadeIn) || 0,
+						fadeOut: Number(cue.fadeOut) || 0,
+						opacity: initOpacity,
+						loop: isLoop,
+						pauseAtEnd,
+						volume: 0,
+						targetScreens: cue.targetScreens || 'all',
+					})
+				}
+				break
+			}
+			case 'background': {
+				this.broadcastStageEvent({
+					type: 'set_background',
+					cueId: cue.id,
+					css: this.computeBackgroundCss(cue),
+					fadeIn: Number(cue.fadeIn) || 0,
+					targetScreens: cue.targetScreens || 'all',
+				})
+				break
+			}
 			case 'companion':
 				this.executeCompanionButtonCue(cue)
 				break
@@ -408,6 +553,15 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			}
 		}
 
+		if (cue.type === 'video') {
+			this.broadcastStageEvent({
+				type: 'stop_video',
+				cueId: cue.id,
+				resetTime: Number(cue.startTime) || 0,
+				targetScreens: cue.targetScreens || 'all',
+			})
+		}
+
 		// Reset media / cue runtime state first
 		cue.state = 'idle'
 		cue.actionElapsed = 0
@@ -438,6 +592,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 	}
 
 	public stopCue(cue: Cue): void {
+		const wasActive = cue.state && cue.state !== 'idle'
 		cue.state = 'idle'
 		cue.preWaitElapsed = 0
 		cue.actionElapsed = 0
@@ -445,6 +600,23 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		cue.currentVolumeDb = cue.volumeDb
 		cue.pauseAtTimeTriggered = false
 		cue.heldAtLastFrame = false
+
+		if (wasActive) {
+			if (cue.type === 'video') {
+				this.broadcastStageEvent({
+					type: 'stop_video',
+					cueId: cue.id,
+					resetTime: Number(cue.startTime) || 0,
+					targetScreens: cue.targetScreens || 'all',
+				})
+			} else if (cue.type === 'background') {
+				this.broadcastStageEvent({
+					type: 'clear_background',
+					cueId: cue.id,
+					targetScreens: cue.targetScreens || 'all',
+				})
+			}
+		}
 	}
 
 	public triggerPanic(): void {
@@ -478,7 +650,16 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			if (anyIndividuallyPaused && !this.isPaused) {
 				this.isPaused = false
 				for (const c of this.cues) {
-					if (c.state === 'paused') c.state = 'running'
+					if (c.state === 'paused') {
+						c.state = 'running'
+						if (c.type === 'video') {
+							this.broadcastStageEvent({
+								type: 'resume_video',
+								cueId: c.id,
+								targetScreens: c.targetScreens || 'all',
+							})
+						}
+					}
 				}
 				this.broadcastState(false)
 				this.syncCompanionState()
@@ -494,8 +675,23 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		for (const c of this.cues) {
 			if (this.isPaused && (c.state === 'running' || c.state === 'prewait')) {
 				c.state = 'paused'
+				if (c.type === 'video') {
+					this.broadcastStageEvent({
+						type: 'pause_video',
+						cueId: c.id,
+						heldAtLastFrame: !!c.heldAtLastFrame,
+						targetScreens: c.targetScreens || 'all',
+					})
+				}
 			} else if (!this.isPaused && c.state === 'paused') {
 				c.state = 'running'
+				if (c.type === 'video') {
+					this.broadcastStageEvent({
+						type: 'resume_video',
+						cueId: c.id,
+						targetScreens: c.targetScreens || 'all',
+					})
+				}
 			}
 		}
 
@@ -560,6 +756,14 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 				for (const c of active) {
 					const startDb = c.fadeStartVolumeDb ?? c.volumeDb ?? 0
 					c.currentVolumeDb = startDb + (-60 - startDb) * t
+					if (c.type === 'video') {
+						this.broadcastStageEvent({
+							type: 'video_opacity',
+							cueId: c.id,
+							opacity: this.computeVideoOpacity(c),
+							targetScreens: c.targetScreens || 'all',
+						})
+					}
 				}
 				if (t >= 1) {
 					this.isPanicking = false
@@ -589,6 +793,14 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 						cue.actionElapsed = pauseAt
 						cue.pauseAtTimeTriggered = true
 						cue.state = 'paused'
+						if (cue.type === 'video') {
+							this.broadcastStageEvent({
+								type: 'pause_video',
+								cueId: cue.id,
+								heldAtLastFrame: false,
+								targetScreens: cue.targetScreens || 'all',
+							})
+						}
 						this.log('info', `Cue Q ${cue.qNumber} (${cue.name}) auto-paused at ${pauseAt}s`)
 						continue
 					}
@@ -613,6 +825,14 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 							const progress = Math.min(1, cue.actionElapsed / cue.duration)
 							const startDb = cue.fadeStartVolumeDb ?? target.volumeDb ?? 0
 							target.currentVolumeDb = Number((startDb + (cue.volumeDb - startDb) * progress).toFixed(2))
+							if (target.type === 'video') {
+								this.broadcastStageEvent({
+									type: 'video_opacity',
+									cueId: target.id,
+									opacity: this.computeVideoOpacity(target),
+									targetScreens: target.targetScreens || 'all',
+								})
+							}
 						}
 					}
 
@@ -632,6 +852,15 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 						} else if (cue.currentVolumeDb === undefined) {
 							cue.currentVolumeDb = cue.volumeDb
 						}
+
+						if (cue.type === 'video') {
+							this.broadcastStageEvent({
+								type: 'video_opacity',
+								cueId: cue.id,
+								opacity: this.computeVideoOpacity(cue),
+								targetScreens: cue.targetScreens || 'all',
+							})
+						}
 					}
 
 					if (cue.duration > 0 && cue.actionElapsed >= cue.duration) {
@@ -642,6 +871,14 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 							cue.actionElapsed = cue.duration
 							cue.heldAtLastFrame = true
 							cue.state = 'paused'
+							if (cue.type === 'video') {
+								this.broadcastStageEvent({
+									type: 'pause_video',
+									cueId: cue.id,
+									heldAtLastFrame: true,
+									targetScreens: cue.targetScreens || 'all',
+								})
+							}
 							if (cue.continueMode === 'auto_follow') {
 								this.fireNextSiblingCue(cue)
 							}
@@ -663,16 +900,36 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 	}
 
 	private executeCompanionButtonCue(cue: Cue): void {
-		const host = this.config.companionHost || '10.101.10.100'
+		const host = ResolveCompanionHost(this.config.companionHost)
 		const port = this.config.companionPort || 8000
 		const action = cue.companionAction || 'press'
 		const pathUrl = `/api/location/${cue.companionPage}/${cue.companionRow}/${cue.companionCol}/${action}`
 
 		this.log('info', `Cue Q ${cue.qNumber} triggering Companion Button: ${host}:${port}${pathUrl}`)
 
-		const req = http.request({ hostname: host, port, path: pathUrl, method: 'POST', timeout: 1500 }, (res) => res.resume())
-		req.on('error', (err) => this.log('warn', `Companion button trigger error: ${err.message}`))
-		req.end()
+		const fallbacks = [DetectLocalIpAddress(), '127.0.0.1'].filter((h, idx, arr) => h !== host && arr.indexOf(h) === idx)
+
+		const sendRequest = (targetHost: string, remaining: string[]) => {
+			const req = http.request({ hostname: targetHost, port, path: pathUrl, method: 'POST', timeout: 1500 }, (res) =>
+				res.resume()
+			)
+			req.on('error', (err) => {
+				if (remaining.length > 0) {
+					sendRequest(remaining[0], remaining.slice(1))
+				} else {
+					this.log('warn', `Companion button trigger error: ${err.message}`)
+				}
+			})
+			req.on('timeout', () => {
+				req.destroy()
+				if (remaining.length > 0) {
+					sendRequest(remaining[0], remaining.slice(1))
+				}
+			})
+			req.end()
+		}
+
+		sendRequest(host, fallbacks)
 	}
 
 	private executeNetworkCue(cue: Cue): void {
@@ -715,7 +972,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		})
 
 		this.httpServer.listen(port, '0.0.0.0', () => {
-			const url = `http://${this.config.companionHost || '10.101.10.100'}:${port}`
+			const url = `http://${ResolveCompanionHost(this.config.companionHost)}:${port}`
 			this.log('info', `Cue Companion Web Workspace live at ${url}`)
 			this.updateStatus(InstanceStatus.Ok, `Ready (${url})`)
 		})
@@ -734,6 +991,32 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		if (req.method === 'GET' && pathname === '/stage') {
 			res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
 			res.end(GetVideoStageHtml())
+			return
+		}
+
+		if (req.method === 'GET' && pathname === '/api/projects') {
+			res.writeHead(200, { 'Content-Type': 'application/json' })
+			res.end(
+				JSON.stringify({
+					ok: true,
+					projectName: this.projectName,
+					projects: this.getSavedProjectsList(),
+				})
+			)
+			return
+		}
+
+		if (req.method === 'GET' && pathname === '/api/project/export') {
+			const payload = this.getSerializedWorkspacePayload()
+			const safeBase = (this.projectName || 'cue-companion-show')
+				.replace(/[^a-zA-Z0-9._-]/g, '_')
+				.replace(/_+/g, '_')
+			const downloadName = `${safeBase}.cueproj.json`
+			res.writeHead(200, {
+				'Content-Type': 'application/json; charset=utf-8',
+				'Content-Disposition': `attachment; filename="${downloadName}"`,
+			})
+			res.end(JSON.stringify(payload, null, 2))
 			return
 		}
 
@@ -785,11 +1068,36 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 				'.mp4': 'video/mp4',
 				'.webm': 'video/webm',
 			}
-			res.writeHead(200, {
-				'Content-Type': mimeMap[ext] || 'application/octet-stream',
-				'Content-Length': stat.size,
-			})
-			fs.createReadStream(filePath).pipe(res)
+			const contentType = mimeMap[ext] || 'application/octet-stream'
+			const range = req.headers.range
+			if (range) {
+				const parts = range.replace(/bytes=/, '').split('-')
+				const start = parseInt(parts[0], 10) || 0
+				const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1
+				const clampedStart = Math.max(0, Math.min(start, stat.size - 1))
+				const clampedEnd = Math.max(clampedStart, Math.min(end, stat.size - 1))
+				const chunkSize = clampedEnd - clampedStart + 1
+				res.writeHead(206, {
+					'Content-Range': `bytes ${clampedStart}-${clampedEnd}/${stat.size}`,
+					'Accept-Ranges': 'bytes',
+					'Content-Length': chunkSize,
+					'Content-Type': contentType,
+					'Access-Control-Allow-Origin': '*',
+				})
+				const stream = fs.createReadStream(filePath, { start: clampedStart, end: clampedEnd })
+				req.on('close', () => stream.destroy())
+				stream.pipe(res)
+			} else {
+				res.writeHead(200, {
+					'Content-Type': contentType,
+					'Content-Length': stat.size,
+					'Accept-Ranges': 'bytes',
+					'Access-Control-Allow-Origin': '*',
+				})
+				const stream = fs.createReadStream(filePath)
+				req.on('close', () => stream.destroy())
+				stream.pipe(res)
+			}
 			return
 		}
 
@@ -803,6 +1111,17 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 				res.writeHead(200, { 'Content-Type': 'application/json' })
 				res.end(JSON.stringify({ ok: true, filename: safeName }))
 				this.broadcastState(true)
+			})
+			return
+		}
+
+		if (req.method === 'POST' && pathname === '/api/stage/log') {
+			let bodyStr = ''
+			req.on('data', (chunk) => (bodyStr += chunk.toString('utf8')))
+			req.on('end', () => {
+				this.log('info', `[STAGE WINDOW] ${bodyStr}`)
+				res.writeHead(200)
+				res.end('ok')
 			})
 			return
 		}
@@ -863,8 +1182,23 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			if (cue) {
 				if (cue.state === 'running' || cue.state === 'prewait') {
 					cue.state = 'paused'
+					if (cue.type === 'video') {
+						this.broadcastStageEvent({
+							type: 'pause_video',
+							cueId: cue.id,
+							heldAtLastFrame: !!cue.heldAtLastFrame,
+							targetScreens: cue.targetScreens || 'all',
+						})
+					}
 				} else if (cue.state === 'paused') {
 					cue.state = 'running'
+					if (cue.type === 'video') {
+						this.broadcastStageEvent({
+							type: 'resume_video',
+							cueId: cue.id,
+							targetScreens: cue.targetScreens || 'all',
+						})
+					}
 				}
 			}
 			this.broadcastState(false)
@@ -1163,10 +1497,13 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		if (pathname === '/api/stage/launch') {
 			const screenIndex = Number(body.screenIndex) || 0
 			const fullscreen = body.fullscreen !== false
-			const launched = this.launchNativeStageWindow(screenIndex, fullscreen)
-			this.broadcastState(false)
+			this.refreshConnectedScreens(() => {
+				this.launchNativeStageWindow(screenIndex, fullscreen)
+				this.broadcastState(false)
+			})
+			this.activeStageSet.add(screenIndex)
 			return {
-				launched,
+				launched: true,
 				screenIndex,
 				fullscreen,
 				activeStageScreens: this.getActiveStageScreenIndices(),
@@ -1180,6 +1517,84 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			return {
 				screenIndex,
 				activeStageScreens: this.getActiveStageScreenIndices(),
+			}
+		}
+
+		if (pathname === '/api/project/save') {
+			const name = String(body.projectName || this.projectName || 'Untitled Show').trim() || 'Untitled Show'
+			this.projectName = name
+			this.saveWorkspaceToDisk()
+			const safeFile = name.replace(/[^a-zA-Z0-9._ -]/g, '_').trim() + '.cueproj.json'
+			const projPath = path.join(this.projectsDir, safeFile)
+			const payload = this.getSerializedWorkspacePayload(name)
+			fs.writeFileSync(projPath, JSON.stringify(payload, null, 2), 'utf8')
+			this.broadcastState(true)
+			return {
+				projectName: this.projectName,
+				filename: safeFile,
+				projects: this.getSavedProjectsList(),
+			}
+		}
+
+		if (pathname === '/api/project/open') {
+			let parsed: any = null
+			if (body.projectData && typeof body.projectData === 'object') {
+				parsed = body.projectData
+			} else if (body.filename) {
+				const safeFile = path.basename(String(body.filename))
+				const projPath = path.join(this.projectsDir, safeFile)
+				if (fs.existsSync(projPath)) {
+					parsed = JSON.parse(fs.readFileSync(projPath, 'utf8'))
+				}
+			}
+			if (parsed && Array.isArray(parsed.cues)) {
+				for (const c of this.cues) {
+					this.stopCue(c)
+				}
+				this.projectName = String(parsed.projectName || body.projectName || 'Imported Show').trim()
+				this.cues = parsed.cues.map((c: Cue) => this.normalizeLoadedCue(c))
+				this.standbyCueId = parsed.standbyCueId || this.cues[0]?.id || null
+				if (typeof parsed.masterVolumeDb === 'number') {
+					this.masterVolumeDb = parsed.masterVolumeDb
+				}
+				this.saveWorkspaceToDisk()
+				this.broadcastState(true)
+				this.syncCompanionState()
+				return {
+					projectName: this.projectName,
+					projects: this.getSavedProjectsList(),
+				}
+			}
+			throw new Error('Invalid project file or no cues found')
+		}
+
+		if (pathname === '/api/project/new') {
+			for (const c of this.cues) {
+				this.stopCue(c)
+			}
+			const mode = body.template === 'demo' ? 'demo' : 'empty'
+			this.projectName = String(body.projectName || (mode === 'demo' ? 'Demo Show' : 'Untitled Show')).trim()
+			this.cues = mode === 'demo' ? CreateDefaultDemoCues().map((c) => this.normalizeLoadedCue(c)) : []
+			this.standbyCueId = this.cues[0]?.id || null
+			this.saveWorkspaceToDisk()
+			this.broadcastState(true)
+			this.syncCompanionState()
+			return {
+				projectName: this.projectName,
+				projects: this.getSavedProjectsList(),
+			}
+		}
+
+		if (pathname === '/api/project/delete') {
+			if (body.filename) {
+				const safeFile = path.basename(String(body.filename))
+				const projPath = path.join(this.projectsDir, safeFile)
+				if (fs.existsSync(projPath)) {
+					fs.unlinkSync(projPath)
+				}
+			}
+			return {
+				projects: this.getSavedProjectsList(),
 			}
 		}
 	}
@@ -1196,10 +1611,11 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			return
 		}
 		const psScript = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class DpiV2 { [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(int f); }'; [DpiV2]::SetProcessDpiAwarenessContext(-4) | Out-Null; Add-Type -AssemblyName System.Windows.Forms; $screens = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object { @{ DeviceName=$_.DeviceName; Primary=$_.Primary; BoundsX=$_.Bounds.X; BoundsY=$_.Bounds.Y; BoundsW=$_.Bounds.Width; BoundsH=$_.Bounds.Height } }); ConvertTo-Json -InputObject $screens -Compress`
+		const encoded = Buffer.from(psScript, 'utf16le').toString('base64')
 		execFile(
 			'powershell.exe',
-			['-NoProfile', '-NonInteractive', '-Command', psScript],
-			{ timeout: 3500 },
+			['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+			{ timeout: 4500 },
 			(err, stdout) => {
 				if (!err && stdout && stdout.trim()) {
 					try {
@@ -1269,7 +1685,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			this.stageProcesses.delete(screenIndex)
 		}
 		if (process.platform === 'win32') {
-			const psKill = `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*.stage-edge-screen-${screenIndex}*" -and ($_.Name -like "*msedge*" -or $_.Name -like "*chrome*") } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
+			const psKill = `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*cue-companion-stage-screen-${screenIndex}*" -and ($_.Name -like "*msedge*" -or $_.Name -like "*chrome*") } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
 			const encodedKill = Buffer.from(psKill, 'utf16le').toString('base64')
 			execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedKill], { timeout: 3000 }, () => {})
 		}
@@ -1308,7 +1724,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 
 		const port = Number(this.config.webPort) || 8090
 		const stageUrl = `http://127.0.0.1:${port}/stage?screen=${screenIndex}&fs=${fullscreen ? '1' : '0'}`
-		const profileDir = path.join(this.dataDir, `.stage-edge-screen-${screenIndex}`)
+		const profileDir = path.join(os.tmpdir(), `cue-companion-stage-screen-${screenIndex}`)
 		const winTitle = `Cue Companion Stage Output - Screen ${screenIndex + 1}`
 
 		const cliArgs = [
@@ -1317,18 +1733,19 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			`--window-position=${x},${y}`,
 			`--window-size=${w},${h}`,
 			'--autoplay-policy=no-user-gesture-required',
+			'--disable-background-media-suspend',
+			'--disable-backgrounding-occluded-windows',
+			'--disable-renderer-backgrounding',
+			'--disable-features=CalculateNativeWinOcclusion,PreloadMediaEngagementData,MediaEngagementBypassAutoplayPolicies',
 			'--no-first-run',
 			'--no-default-browser-check',
 			'--disable-session-crashed-bubble',
 			'--disable-infobars',
 		]
-		if (fullscreen) {
-			cliArgs.push('--start-fullscreen')
-		}
 		const argStr = cliArgs.join(' ')
 
 		const psLaunch = `
-Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*.stage-edge-screen-${screenIndex}*" -and ($_.Name -like "*msedge*" -or $_.Name -like "*chrome*") } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*cue-companion-stage-screen-${screenIndex}*" -and ($_.Name -like "*msedge*" -or $_.Name -like "*chrome*") } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Milliseconds 150
 Add-Type @"
 using System;
@@ -1339,26 +1756,29 @@ public class StageWin32 {
     [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 }
 "@
 [StageWin32]::SetProcessDpiAwarenessContext(-4) | Out-Null
-$shell = New-Object -ComObject Shell.Application
-$shell.ShellExecute('${exe}', '${argStr}', '', 'open', 1)
-for ($attempt = 0; $attempt -lt 20; $attempt++) {
-    Start-Sleep -Milliseconds 250
+Start-Process -FilePath '${exe}' -ArgumentList '${argStr}'
+for ($attempt = 0; $attempt -lt 25; $attempt++) {
+    Start-Sleep -Milliseconds 200
     $procs = Get-Process | Where-Object { $_.MainWindowTitle -like "*${winTitle}*" }
     if ($procs) {
         foreach ($p in $procs) {
             $hwnd = $p.MainWindowHandle
             if ($hwnd -ne 0) {
+                [StageWin32]::ShowWindow($hwnd, 9) | Out-Null
+                [StageWin32]::ShowWindow($hwnd, 5) | Out-Null
+                [StageWin32]::SetForegroundWindow($hwnd) | Out-Null
                 if ($${fullscreen ? 'true' : 'false'}) {
                     $style = [StageWin32]::GetWindowLong($hwnd, -16)
                     $borderless = $style -band (-bnot 0x00CF0000)
                     [StageWin32]::SetWindowLong($hwnd, -16, $borderless) | Out-Null
                 }
-                [StageWin32]::SetWindowPos($hwnd, [IntPtr]::Zero, ${x}, ${y}, ${w}, ${h}, 0x0060) | Out-Null
+                [StageWin32]::SetWindowPos($hwnd, [IntPtr](-1), ${x}, ${y}, ${w}, ${h}, 0x0060) | Out-Null
                 $r = New-Object StageWin32+RECT
                 [StageWin32]::GetWindowRect($hwnd, [ref]$r) | Out-Null
                 Write-Output "Matched Window: PID=$($p.Id) hwnd=$hwnd Title='$($p.MainWindowTitle)' Rect=($($r.Left),$($r.Top) $($r.Right - $r.Left)x$($r.Bottom - $r.Top))"
@@ -1374,7 +1794,11 @@ Write-Output "Loop finished at attempt $attempt"
 		try {
 			const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedLaunch], {
 				detached: false,
-				stdio: 'ignore',
+				stdio: ['ignore', 'pipe', 'ignore'],
+			})
+			child.stdout.on('data', (d) => {
+				const msg = d.toString().trim()
+				if (msg) this.log('info', `[StageLaunch] ${msg}`)
 			})
 			this.stageProcesses.set(screenIndex, child)
 
@@ -1402,6 +1826,7 @@ Write-Output "Loop finished at attempt $attempt"
 
 	private sendSseToClient(client: http.ServerResponse, fullRefresh: boolean): void {
 		const payload = JSON.stringify({
+			projectName: this.projectName,
 			cues: this.cues,
 			mediaFiles: this.getMediaFiles(),
 			standbyCueId: this.standbyCueId,
@@ -1412,6 +1837,55 @@ Write-Output "Loop finished at attempt $attempt"
 			fullRefresh,
 		})
 		client.write(`data: ${payload}\n\n`)
+
+		if (fullRefresh) {
+			const activeBg = [...this.cues]
+				.reverse()
+				.find((c) => c.type === 'background' && (c.state === 'running' || c.state === 'paused'))
+			if (activeBg) {
+				const bgEvt = JSON.stringify({
+					stageEvent: {
+						type: 'set_background',
+						cueId: activeBg.id,
+						css: this.computeBackgroundCss(activeBg),
+						fadeIn: 0,
+						targetScreens: activeBg.targetScreens || 'all',
+					},
+				})
+				client.write(`data: ${bgEvt}\n\n`)
+			}
+
+			const activeVid = [...this.cues]
+				.reverse()
+				.find((c) => c.type === 'video' && (c.state === 'running' || c.state === 'paused'))
+			if (activeVid && activeVid.filePath && !activeVid.filePath.startsWith('synth:')) {
+				const fp = activeVid.filePath
+				const url = fp.startsWith('http') || fp.startsWith('/') ? fp : `/media/${encodeURIComponent(fp)}`
+				const startSec = Number(activeVid.startTime) || 0
+				const endSec = Number(activeVid.endTime) || Number(activeVid.duration) || 0
+				const curTime = startSec + (Number(activeVid.actionElapsed) || 0)
+				const vidEvt = JSON.stringify({
+					stageEvent: {
+						type: 'play_video',
+						cueId: activeVid.id,
+						url,
+						startTime: startSec,
+						currentTime: curTime,
+						endTime: endSec,
+						duration: Number(activeVid.duration) || endSec - startSec || 5,
+						fadeIn: Number(activeVid.fadeIn) || 0,
+						fadeOut: Number(activeVid.fadeOut) || 0,
+						opacity: this.computeVideoOpacity(activeVid),
+						loop: activeVid.loopMode === 'infinite_loop' || !!activeVid.loop,
+						pauseAtEnd: activeVid.loopMode === 'pause_at_end',
+						paused: activeVid.state === 'paused',
+						volume: 0,
+						targetScreens: activeVid.targetScreens || 'all',
+					},
+				})
+				client.write(`data: ${vidEvt}\n\n`)
+			}
+		}
 	}
 
 	private broadcastState(fullRefresh: boolean): void {
@@ -1446,7 +1920,7 @@ Write-Output "Loop finished at attempt $attempt"
 		const pct = primary && primary.duration > 0 ? Math.min(100, Math.round((elapsed / primary.duration) * 100)) : 0
 
 		const port = Number(this.config.webPort) || 8090
-		const url = `http://${this.config.companionHost || '10.101.10.100'}:${port}`
+		const url = `http://${ResolveCompanionHost(this.config.companionHost)}:${port}`
 
 		this.setVariableValues({
 			next_cue_num: standby ? standby.qNumber : '-',

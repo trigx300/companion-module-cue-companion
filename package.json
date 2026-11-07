@@ -1,6 +1,6 @@
 {
 	"name": "companion-module-cue-companion",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Cue Companion — Show control & media cue playlist workspace for Bitfocus Companion",
 	"author": "David Giardinelli <trigx300@gmail.com>",
 	"license": "MIT",

@@ -14,6 +14,8 @@ It provides a browser-based cue list and show-control engine with multi-screen s
 - **Companion Button Cues**: Trigger any Bitfocus Companion button (`Page / Row / Column`) directly from your cue sequence.
 - **Fade Cues**: Smoothly fade the volume (dB) or visual opacity of another running cue over a specified duration, with optional *Stop target when done*.
 - **Wait, Group, Network, Stop & Goto Cues**: Full show-control sequencing with *Auto-Continue* (`→`), *Auto-Follow* (`⚓`), and collapsible Group cues.
+- **Project Save / Open / Import / Export Manager**: Save multiple show projects on the Companion server or export/import `.cueproj.json` files.
+- **Native Multi-Display Stage Launcher**: Automatically detects connected monitors/projectors and launches borderless fullscreen stage windows on selected displays.
 
 ---
 
@@ -22,14 +24,14 @@ It provides a browser-based cue list and show-control engine with multi-screen s
 ### Option 1: Import Module Package into Bitfocus Companion (`.tgz`)
 1. Open the **Bitfocus Companion** admin UI (`http://localhost:8000`).
 2. Navigate to the **Modules** tab.
-3. Click **Import module package** and select **`cue-companion-1.0.0.tgz`**.
+3. Click **Import module package** and select **`cue-companion-1.1.0.tgz`**.
 4. Add a new **Cue Companion** connection under **Connections**.
 
 ### Option 2: Direct Installed Module Folder
-Copy the **`cue-companion-1.0.0`** folder directly into your Companion modules directory:
-- **Windows**: `%APPDATA%\companion\modules\cue-companion-1.0.0`
-- **macOS**: `~/Library/Application Support/companion/modules/cue-companion-1.0.0`
-- **Linux**: `~/.config/companion/modules/cue-companion-1.0.0`
+Copy the **`cue-companion-1.1.0`** folder directly into your Companion modules directory:
+- **Windows**: `%APPDATA%\companion\modules\cue-companion-1.1.0`
+- **macOS**: `~/Library/Application Support/companion/modules/cue-companion-1.1.0`
+- **Linux**: `~/.config/companion/modules/cue-companion-1.1.0`
 
 Then restart Bitfocus Companion.
 
