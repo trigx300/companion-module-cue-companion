@@ -15,7 +15,18 @@ It provides a browser-based cue list and show-control engine with multi-screen s
 - **Fade Cues**: Smoothly fade the volume (dB) or visual opacity of another running cue over a specified duration, with optional *Stop target when done*.
 - **Wait, Group, Network, Stop & Goto Cues**: Full show-control sequencing with *Auto-Continue* (`→`), *Auto-Follow* (`⚓`), and collapsible Group cues.
 - **Project Save / Open / Import / Export Manager**: Save multiple show projects on the Companion server or export/import `.cueproj.json` files.
-- **Native Multi-Display Stage Launcher**: Automatically detects connected monitors/projectors and launches borderless fullscreen stage windows on selected displays.
+- **Cross-Platform Native Multi-Display Stage Launcher**: Automatically detects connected monitors/projectors and launches borderless fullscreen stage windows on selected displays across **Windows**, **macOS (OSX)**, **Linux (X11 & Wayland)**, and **Raspberry Pi (RPi OS)**.
+
+---
+
+## Supported Platforms
+
+| Platform | Display Detection | Stage Output Browser Discovery |
+| :--- | :--- | :--- |
+| **Windows** | Win32 / PowerShell (`System.Windows.Forms.Screen`) | Microsoft Edge, Google Chrome |
+| **macOS (OSX)** | Cocoa `NSScreen` via `osascript` (JXA) | Google Chrome, Microsoft Edge, Chromium, Brave |
+| **Linux (Desktop)** | `xrandr` (X11), `wlr-randr` (Wayland), `/sys/class/drm` | `chromium`, `chromium-browser`, `google-chrome`, `microsoft-edge`, `brave-browser` |
+| **Raspberry Pi (RPi)** | `wlr-randr` (Bookworm Wayland), `xrandr` (X11), `/sys/class/drm` | `chromium-browser` / `chromium` (pre-installed on Raspberry Pi OS) |
 
 ---
 

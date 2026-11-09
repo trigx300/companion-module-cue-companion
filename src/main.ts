@@ -3,7 +3,7 @@ import http from 'http'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { execFile, spawn, ChildProcess } from 'child_process'
+import { execFile, execFileSync, spawn, ChildProcess } from 'child_process'
 import { CueCompanionConfig, GetConfigFields, DetectLocalIpAddress, ResolveCompanionHost } from './config'
 import { Cue, CueType, CreateDefaultDemoCues } from './types'
 import { GetActions } from './actions'
@@ -1606,39 +1606,73 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 	}
 
 	private refreshConnectedScreens(done?: () => void): void {
-		if (process.platform !== 'win32') {
-			if (done) done()
+		if (process.platform === 'win32') {
+			const psScript = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class DpiV2 { [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(int f); }'; [DpiV2]::SetProcessDpiAwarenessContext(-4) | Out-Null; Add-Type -AssemblyName System.Windows.Forms; $screens = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object { @{ DeviceName=$_.DeviceName; Primary=$_.Primary; BoundsX=$_.Bounds.X; BoundsY=$_.Bounds.Y; BoundsW=$_.Bounds.Width; BoundsH=$_.Bounds.Height } }); ConvertTo-Json -InputObject $screens -Compress`
+			const encoded = Buffer.from(psScript, 'utf16le').toString('base64')
+			execFile(
+				'powershell.exe',
+				['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+				{ timeout: 4500 },
+				(err, stdout) => {
+					if (!err && stdout && stdout.trim()) {
+						try {
+							const parsed = JSON.parse(stdout.trim())
+							const arr = Array.isArray(parsed) ? parsed : [parsed]
+							if (arr.length > 0) {
+								arr.sort((a, b) => {
+									if (a.Primary && !b.Primary) return -1
+									if (!a.Primary && b.Primary) return 1
+									return (Number(a.BoundsX) || 0) - (Number(b.BoundsX) || 0)
+								})
+								this.detectedDisplays = arr.map((s, idx) => {
+									const cleanDev = String(s.DeviceName || `DISPLAY${idx + 1}`).replace('\\\\.\\', '')
+									const w = Number(s.BoundsW) || 1920
+									const h = Number(s.BoundsH) || 1080
+									const isPrim = !!s.Primary
+									return {
+										index: idx,
+										deviceName: String(s.DeviceName || `\\\\.\\DISPLAY${idx + 1}`),
+										label: `${cleanDev} (${w}×${h})${isPrim ? ' [Primary]' : ' [Extended]'}`,
+										left: Number(s.BoundsX) || 0,
+										top: Number(s.BoundsY) || 0,
+										width: w,
+										height: h,
+										isPrimary: isPrim,
+									}
+								})
+							}
+						} catch (parseErr) {
+							this.log('debug', `Screen parse fallback: ${parseErr}`)
+						}
+					}
+					if (done) done()
+				}
+			)
 			return
 		}
-		const psScript = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class DpiV2 { [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(int f); }'; [DpiV2]::SetProcessDpiAwarenessContext(-4) | Out-Null; Add-Type -AssemblyName System.Windows.Forms; $screens = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object { @{ DeviceName=$_.DeviceName; Primary=$_.Primary; BoundsX=$_.Bounds.X; BoundsY=$_.Bounds.Y; BoundsW=$_.Bounds.Width; BoundsH=$_.Bounds.Height } }); ConvertTo-Json -InputObject $screens -Compress`
-		const encoded = Buffer.from(psScript, 'utf16le').toString('base64')
-		execFile(
-			'powershell.exe',
-			['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-			{ timeout: 4500 },
-			(err, stdout) => {
+
+		if (process.platform === 'darwin') {
+			const jxaScript = `ObjC.import('AppKit'); var screens = $.NSScreen.screens; var count = screens.count; var res = []; for (var i = 0; i < count; i++) { var s = screens.objectAtIndex(i); var f = s.frame; var name = s.localizedName ? ObjC.unwrap(s.localizedName) : ('Display ' + (i + 1)); res.push({ deviceName: name, isPrimary: i === 0, left: Math.round(f.origin.x), top: Math.round(f.origin.y), width: Math.round(f.size.width), height: Math.round(f.size.height) }); } JSON.stringify(res);`
+			execFile('osascript', ['-l', 'JavaScript', '-e', jxaScript], { timeout: 4500 }, (err, stdout) => {
 				if (!err && stdout && stdout.trim()) {
 					try {
-						const parsed = JSON.parse(stdout.trim())
-						const arr = Array.isArray(parsed) ? parsed : [parsed]
-						if (arr.length > 0) {
-							// Sort so primary is first, or by BoundsX
-							arr.sort((a, b) => {
-								if (a.Primary && !b.Primary) return -1
-								if (!a.Primary && b.Primary) return 1
-								return (Number(a.BoundsX) || 0) - (Number(b.BoundsX) || 0)
-							})
+						const arr = JSON.parse(stdout.trim())
+						if (Array.isArray(arr) && arr.length > 0) {
+							const primaryHeight = Number(arr[0]?.height) || 1080
 							this.detectedDisplays = arr.map((s, idx) => {
-								const cleanDev = String(s.DeviceName || `DISPLAY${idx + 1}`).replace('\\\\.\\', '')
-								const w = Number(s.BoundsW) || 1920
-								const h = Number(s.BoundsH) || 1080
-								const isPrim = !!s.Primary
+								const w = Number(s.width) || 1920
+								const h = Number(s.height) || 1080
+								const left = Number(s.left) || 0
+								// Convert macOS Cocoa bottom-left origin to top-left origin for Chromium window placement
+								const top = primaryHeight - (Number(s.top) || 0) - h
+								const isPrim = idx === 0 || !!s.isPrimary
+								const devName = String(s.deviceName || `Display ${idx + 1}`)
 								return {
 									index: idx,
-									deviceName: String(s.DeviceName || `\\\\.\\DISPLAY${idx + 1}`),
-									label: `${cleanDev} (${w}×${h})${isPrim ? ' [Primary]' : ' [Extended]'}`,
-									left: Number(s.BoundsX) || 0,
-									top: Number(s.BoundsY) || 0,
+									deviceName: devName,
+									label: `${devName} (${w}×${h})${isPrim ? ' [Primary]' : ' [Extended]'}`,
+									left,
+									top,
 									width: w,
 									height: h,
 									isPrimary: isPrim,
@@ -1646,28 +1680,208 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 							})
 						}
 					} catch (parseErr) {
-						this.log('debug', `Screen parse fallback: ${parseErr}`)
+						this.log('debug', `macOS screen parse fallback: ${parseErr}`)
 					}
 				}
 				if (done) done()
+			})
+			return
+		}
+
+		// Linux & Raspberry Pi (X11 xrandr -> Wayland wlr-randr -> /sys/class/drm fallback)
+		const env = { ...process.env, DISPLAY: process.env.DISPLAY || ':0' }
+		execFile('xrandr', ['--query'], { env, timeout: 3500 }, (err, stdout) => {
+			if (!err && stdout && stdout.includes(' connected')) {
+				const displays: DetectedDisplay[] = []
+				const lines = stdout.split(/\r?\n/)
+				for (const line of lines) {
+					if (!line.includes(' connected')) continue
+					const m = line.match(/^(\S+)\s+connected\s+(primary\s+)?(\d+)x(\d+)\+(-?\d+)\+(-?\d+)/)
+					if (m) {
+						const dev = m[1]
+						const isPrim = !!m[2]
+						const w = parseInt(m[3], 10) || 1920
+						const h = parseInt(m[4], 10) || 1080
+						const left = parseInt(m[5], 10) || 0
+						const top = parseInt(m[6], 10) || 0
+						displays.push({
+							index: 0,
+							deviceName: dev,
+							label: `${dev} (${w}×${h})${isPrim ? ' [Primary]' : ' [Extended]'}`,
+							left,
+							top,
+							width: w,
+							height: h,
+							isPrimary: isPrim,
+						})
+					}
+				}
+				if (displays.length > 0) {
+					if (!displays.some((d) => d.isPrimary)) displays[0].isPrimary = true
+					displays.sort((a, b) => {
+						if (a.isPrimary && !b.isPrimary) return -1
+						if (!a.isPrimary && b.isPrimary) return 1
+						return a.left - b.left
+					})
+					this.detectedDisplays = displays.map((d, idx) => ({ ...d, index: idx }))
+					if (done) done()
+					return
+				}
 			}
-		)
+
+			// Fallback 2: wlr-randr (Raspberry Pi OS Bookworm / Wayland labwc / wayfire)
+			execFile('wlr-randr', [], { env, timeout: 3500 }, (wlrErr, wlrOut) => {
+				if (!wlrErr && wlrOut && wlrOut.trim()) {
+					const displays: DetectedDisplay[] = []
+					const blocks = wlrOut.split(/\r?\n(?=\S)/)
+					for (const block of blocks) {
+						const headerMatch = block.match(/^(\S+)\s+"([^"]*)"/)
+						if (!headerMatch) continue
+						if (block.includes('Enabled: no')) continue
+						const dev = headerMatch[1]
+						const resMatch = block.match(/(\d+)x(\d+)\s+px,.*current/) || block.match(/(\d+)x(\d+)\s+px/)
+						const posMatch = block.match(/Position:\s*(-?\d+)\s*,\s*(-?\d+)/)
+						const w = resMatch ? parseInt(resMatch[1], 10) : 1920
+						const h = resMatch ? parseInt(resMatch[2], 10) : 1080
+						const left = posMatch ? parseInt(posMatch[1], 10) : displays.length * w
+						const top = posMatch ? parseInt(posMatch[2], 10) : 0
+						const isPrim = displays.length === 0 || (left === 0 && top === 0)
+						displays.push({
+							index: displays.length,
+							deviceName: dev,
+							label: `${dev} (${w}×${h})${isPrim ? ' [Primary]' : ' [Extended]'}`,
+							left,
+							top,
+							width: w,
+							height: h,
+							isPrimary: isPrim,
+						})
+					}
+					if (displays.length > 0) {
+						displays.sort((a, b) => a.left - b.left)
+						this.detectedDisplays = displays.map((d, idx) => ({
+							...d,
+							index: idx,
+							isPrimary: idx === 0,
+							label: `${d.deviceName} (${d.width}×${d.height})${idx === 0 ? ' [Primary]' : ' [Extended]'}`,
+						}))
+						if (done) done()
+						return
+					}
+				}
+
+				// Fallback 3: Linux / Raspberry Pi DRM sysfs (/sys/class/drm)
+				try {
+					const drmRoot = '/sys/class/drm'
+					if (fs.existsSync(drmRoot)) {
+						const entries = fs.readdirSync(drmRoot).filter((e) => /^card\d+-/.test(e))
+						const displays: DetectedDisplay[] = []
+						let curLeft = 0
+						for (const entry of entries) {
+							const statusPath = path.join(drmRoot, entry, 'status')
+							if (!fs.existsSync(statusPath)) continue
+							const status = fs.readFileSync(statusPath, 'utf8').trim()
+							if (status !== 'connected') continue
+							const dev = entry.replace(/^card\d+-/, '')
+							let w = 1920
+							let h = 1080
+							const modesPath = path.join(drmRoot, entry, 'modes')
+							if (fs.existsSync(modesPath)) {
+								const firstMode = fs.readFileSync(modesPath, 'utf8').split(/\r?\n/)[0] || ''
+								const mm = firstMode.match(/(\d+)x(\d+)/)
+								if (mm) {
+									w = parseInt(mm[1], 10) || 1920
+									h = parseInt(mm[2], 10) || 1080
+								}
+							}
+							const idx = displays.length
+							const isPrim = idx === 0
+							displays.push({
+								index: idx,
+								deviceName: dev,
+								label: `${dev} (${w}×${h})${isPrim ? ' [Primary]' : ' [Extended]'}`,
+								left: curLeft,
+								top: 0,
+								width: w,
+								height: h,
+								isPrimary: isPrim,
+							})
+							curLeft += w
+						}
+						if (displays.length > 0) {
+							this.detectedDisplays = displays
+						}
+					}
+				} catch {}
+				if (done) done()
+			})
+		})
 	}
 
 	private findChromiumExecutable(): string | null {
-		const candidates = [
-			'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-			'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-			'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-			'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-			process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Google\\Chrome\\Application\\chrome.exe') : '',
-		].filter(Boolean)
+		if (process.platform === 'win32') {
+			const candidates = [
+				'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+				'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+				'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+				'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+				process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Google\\Chrome\\Application\\chrome.exe') : '',
+			].filter(Boolean)
 
-		for (const candidate of candidates) {
+			for (const candidate of candidates) {
+				if (fs.existsSync(candidate)) {
+					return candidate
+				}
+			}
+			return null
+		}
+
+		if (process.platform === 'darwin') {
+			const macCandidates = [
+				'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+				'/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+				'/Applications/Chromium.app/Contents/MacOS/Chromium',
+				'/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+				path.join(os.homedir(), 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome'),
+				path.join(os.homedir(), 'Applications/Chromium.app/Contents/MacOS/Chromium'),
+			]
+			for (const candidate of macCandidates) {
+				if (fs.existsSync(candidate)) {
+					return candidate
+				}
+			}
+			return null
+		}
+
+		// Linux & Raspberry Pi (Debian/Ubuntu/Raspberry Pi OS/Fedora/Arch/Snap)
+		const linuxPaths = [
+			'/usr/bin/chromium-browser',
+			'/usr/bin/chromium',
+			'/snap/bin/chromium',
+			'/usr/bin/google-chrome-stable',
+			'/usr/bin/google-chrome',
+			'/usr/bin/microsoft-edge-stable',
+			'/usr/bin/microsoft-edge',
+			'/usr/bin/brave-browser',
+			'/usr/local/bin/chromium',
+			'/usr/local/bin/chromium-browser',
+		]
+		for (const candidate of linuxPaths) {
 			if (fs.existsSync(candidate)) {
 				return candidate
 			}
 		}
+
+		const binNames = ['chromium-browser', 'chromium', 'google-chrome-stable', 'google-chrome', 'microsoft-edge', 'brave-browser']
+		for (const bin of binNames) {
+			try {
+				const resolved = execFileSync('which', [bin], { timeout: 1500 }).toString().trim()
+				if (resolved && fs.existsSync(resolved)) {
+					return resolved
+				}
+			} catch {}
+		}
+
 		return null
 	}
 
@@ -1679,7 +1893,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 				if (existing.pid && process.platform === 'win32') {
 					execFile('taskkill', ['/PID', String(existing.pid), '/T', '/F'], () => {})
 				} else {
-					existing.kill()
+					existing.kill('SIGTERM')
 				}
 			} catch {}
 			this.stageProcesses.delete(screenIndex)
@@ -1688,17 +1902,18 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			const psKill = `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*cue-companion-stage-screen-${screenIndex}*" -and ($_.Name -like "*msedge*" -or $_.Name -like "*chrome*") } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
 			const encodedKill = Buffer.from(psKill, 'utf16le').toString('base64')
 			execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedKill], { timeout: 3000 }, () => {})
+		} else {
+			execFile('pkill', ['-f', `cue-companion-stage-screen-${screenIndex}`], { timeout: 2500 }, () => {})
 		}
 	}
 
 	private launchNativeStageWindow(screenIndex: number, fullscreen: boolean): boolean {
 		const exe = this.findChromiumExecutable()
 		if (!exe) {
-			this.log('warn', 'No Edge/Chrome executable found for native multi-screen stage launch')
+			this.log('warn', 'No Chromium/Chrome/Edge executable found for native multi-screen stage launch')
 			return false
 		}
 
-		// Cancel any still-running launcher script for this screen index (without spawning an async killer that races the new window)
 		const existingLauncher = this.stageProcesses.get(screenIndex)
 		if (existingLauncher) {
 			try {
@@ -1727,6 +1942,68 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		const profileDir = path.join(os.tmpdir(), `cue-companion-stage-screen-${screenIndex}`)
 		const winTitle = `Cue Companion Stage Output - Screen ${screenIndex + 1}`
 
+		// macOS, Linux, and Raspberry Pi native Chromium stage window launch
+		if (process.platform !== 'win32') {
+			try {
+				try {
+					execFileSync('pkill', ['-f', `cue-companion-stage-screen-${screenIndex}`], { timeout: 1500 })
+				} catch {}
+
+				const unixArgs = [
+					`--user-data-dir=${profileDir}`,
+					`--app=${stageUrl}`,
+					`--window-position=${x},${y}`,
+					`--window-size=${w},${h}`,
+					'--autoplay-policy=no-user-gesture-required',
+					'--disable-background-media-suspend',
+					'--disable-backgrounding-occluded-windows',
+					'--disable-renderer-backgrounding',
+					'--disable-features=CalculateNativeWinOcclusion,PreloadMediaEngagementData,MediaEngagementBypassAutoplayPolicies',
+					'--no-first-run',
+					'--no-default-browser-check',
+					'--disable-session-crashed-bubble',
+					'--disable-infobars',
+					'--check-for-update-interval=31536000',
+				]
+				if (fullscreen) {
+					unixArgs.push('--start-fullscreen', '--kiosk')
+				}
+
+				const env: NodeJS.ProcessEnv = { ...process.env }
+				if (process.platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
+					env.DISPLAY = ':0'
+				}
+
+				const child = spawn(exe, unixArgs, {
+					detached: false,
+					env,
+					stdio: 'ignore',
+				})
+				this.stageProcesses.set(screenIndex, child)
+
+				// On Linux/RPi X11, if wmctrl is installed, also enforce exact monitor geometry & fullscreen after window creation
+				if (process.platform === 'linux') {
+					setTimeout(() => {
+						execFile('wmctrl', ['-r', winTitle, '-e', `0,${x},${y},${w},${h}`], { env, timeout: 2000 }, () => {
+							if (fullscreen) {
+								execFile('wmctrl', ['-r', winTitle, '-b', 'add,fullscreen,above'], { env, timeout: 2000 }, () => {})
+							}
+						})
+					}, 1200)
+				}
+
+				this.log(
+					'info',
+					`Launched Stage Output on Screen ${screenIndex + 1} via ${exe} (${x},${y} ${w}x${h}, fullscreen=${fullscreen})`
+				)
+				return true
+			} catch (err) {
+				this.log('error', `Failed to spawn native stage window on ${process.platform}: ${err}`)
+				return false
+			}
+		}
+
+		// Windows native launch with Win32 borderless positioning
 		const cliArgs = [
 			`--user-data-dir="${profileDir}"`,
 			`--app="${stageUrl}"`,
