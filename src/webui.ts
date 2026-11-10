@@ -882,8 +882,9 @@ export function GetCueCompanionWebUiHtml(): string {
 				<button class="tool-btn" onclick="closeScreenModal()">✕ Close</button>
 			</div>
 			<div style="font-size:12px;color:var(--text-muted);line-height:1.4;">
-				Select which display(s) to launch the borderless Video / Background Stage Output on, or click <b>Fullscreen</b> on any active stage window.
+				Select which display(s) to launch the borderless Video / Background Stage Output on, or click <b>Fullscreen</b> on any active stage window. On a Raspberry Pi running Companion OS, Fullscreen installs the display stack if needed and replaces the HDMI console with the stage.
 			</div>
+			<div id="stageKioskStatus" style="font-size:12px;color:#fbbf24;line-height:1.4;"></div>
 			<div id="detectedScreensList" style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto;"></div>
 			<div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid #2e3440;padding-top:10px;">
 				<button class="tool-btn" onclick="detectDisplays(true)">🔄 Detect Connected Screens</button>
@@ -1089,6 +1090,10 @@ export function GetCueCompanionWebUiHtml(): string {
 				if (Array.isArray(data.activeStageScreens)) {
 					activeNativeStageScreens = new Set(data.activeStageScreens);
 				}
+				if (typeof data.kioskMessage === 'string') {
+					const kioskNote = document.getElementById('stageKioskStatus');
+					if (kioskNote) kioskNote.textContent = data.kioskMessage;
+				}
 				renderScreenModalList();
 				if (currentTab === 'levels' || currentTab === 'basics') renderInspector();
 				return;
@@ -1169,6 +1174,15 @@ export function GetCueCompanionWebUiHtml(): string {
 				body: JSON.stringify({ screenIndex: screenIdx, fullscreen: !!goFullscreen })
 			});
 			const data = await res.json();
+			if (data && data.kiosk) {
+				const kioskNote = document.getElementById('stageKioskStatus');
+				if (kioskNote) kioskNote.textContent = data.message || 'Starting the HDMI stage on this Pi.';
+				if (Array.isArray(data.activeStageScreens)) {
+					activeNativeStageScreens = new Set(data.activeStageScreens);
+				}
+				renderScreenModalList();
+				return;
+			}
 			if (data && data.launched) {
 				if (Array.isArray(data.activeStageScreens)) {
 					activeNativeStageScreens = new Set(data.activeStageScreens);
@@ -2853,6 +2867,10 @@ export function GetCueCompanionWebUiHtml(): string {
 				if (Array.isArray(payload.activeStageScreens)) {
 					activeNativeStageScreens = new Set(payload.activeStageScreens);
 				}
+				if (typeof payload.kioskMessage === 'string') {
+					const kioskNote = document.getElementById('stageKioskStatus');
+					if (kioskNote) kioskNote.textContent = payload.kioskMessage;
+				}
 
 				if (!selectedCueId && standbyCueId) {
 					selectedCueId = standbyCueId;
@@ -2928,6 +2946,22 @@ export function GetVideoStageHtml(): string {
 		opacity: 1;
 		transition: opacity 0.06s linear;
 	}
+	#stageError {
+		position: fixed;
+		left: 50%;
+		bottom: 8vh;
+		transform: translateX(-50%);
+		z-index: 9;
+		max-width: 80vw;
+		padding: 14px 18px;
+		border-radius: 8px;
+		background: rgba(127, 29, 29, 0.92);
+		color: #fee2e2;
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+		font-size: 22px;
+		text-align: center;
+		display: none;
+	}
 	#fsButtonOverlay {
 		position: fixed;
 		top: 12px;
@@ -2953,7 +2987,8 @@ export function GetVideoStageHtml(): string {
 </head>
 <body ondblclick="enterStageFullscreen()">
 	<div id="bgLayer"></div>
-	<video id="stageVideo" muted playsinline preload="auto"></video>
+	<video id="stageVideo" playsinline preload="auto"></video>
+	<div id="stageError"></div>
 	<button id="fsButtonOverlay" onclick="enterStageFullscreen()">⛶ Enter Fullscreen</button>
 	<script>
 		const params = new URLSearchParams(window.location.search);
@@ -2961,11 +2996,34 @@ export function GetVideoStageHtml(): string {
 		const wantAutoFs = params.get('fs') === '1';
 		document.title = 'Cue Companion Stage Output - Screen ' + (Number(myScreenIdx) + 1);
 
-		function stageLog(msg) {}
+		function stageLog(msg) {
+			fetch('/api/stage/log', {
+				method: 'POST',
+				headers: { 'Content-Type': 'text/plain' },
+				body: String(msg),
+			}).catch(() => {});
+		}
+
+		function showStageError(text) {
+			const el = document.getElementById('stageError');
+			if (!text) {
+				el.style.display = 'none';
+				el.textContent = '';
+				return;
+			}
+			el.textContent = text;
+			el.style.display = 'block';
+		}
+
+		function applyStageAudio(msg) {
+			const gain = msg && msg.volume !== undefined ? Number(msg.volume) : vid.volume;
+			const level = Math.max(0, Math.min(1, Number.isFinite(gain) ? gain : 1));
+			vid.volume = level;
+			vid.muted = level <= 0.001;
+		}
 
 		const bgLayer = document.getElementById('bgLayer');
 		const vid = document.getElementById('stageVideo');
-		vid.muted = true;
 		let activeVideoCueId = null;
 		let currentVideoEndTime = 0;
 		let currentVideoStartTime = 0;
@@ -2976,8 +3034,11 @@ export function GetVideoStageHtml(): string {
 		let cursorTimer = null;
 
 		vid.onerror = () => {
-			stageLog('VIDEO ERROR: code=' + (vid.error ? vid.error.code : 'none') + ' msg=' + (vid.error ? vid.error.message : '') + ' src=' + vid.src);
+			const detail = 'code=' + (vid.error ? vid.error.code : 'none') + ' msg=' + (vid.error ? vid.error.message : '') + ' src=' + vid.currentSrc;
+			stageLog('VIDEO ERROR: ' + detail);
+			showStageError('This cue did not play. The video file is missing or incomplete.');
 		};
+		vid.onplaying = () => showStageError('');
 
 		window.addEventListener('mousemove', () => {
 			document.body.classList.add('show-cursor');
@@ -3072,8 +3133,7 @@ export function GetVideoStageHtml(): string {
 				currentVideoFadeOut = Number(msg.fadeOut) || 0;
 				currentVideoLoop = !!msg.loop;
 				currentVideoPauseAtEnd = !!msg.pauseAtEnd;
-				vid.muted = true;
-				vid.volume = 0;
+				applyStageAudio(msg);
 				vid.loop = false;
 				vid.style.opacity = String(msg.opacity !== undefined ? msg.opacity : (currentVideoFadeIn > 0 ? 0 : 1));
 				vid.style.display = 'block';
@@ -3092,7 +3152,10 @@ export function GetVideoStageHtml(): string {
 					} else {
 						const p = vid.play();
 						if (p && p.catch) {
-							p.catch(err => stageLog('vid.play() rejected: ' + err));
+							p.catch(err => {
+								stageLog('vid.play() rejected: ' + err);
+								showStageError('This cue did not play. The video file is missing or incomplete.');
+							});
 						}
 					}
 				};
@@ -3120,10 +3183,11 @@ export function GetVideoStageHtml(): string {
 				if (msg.opacity !== undefined) {
 					vid.style.opacity = String(msg.opacity);
 				}
+				if (msg.volume !== undefined) applyStageAudio(msg);
 			} else if (msg.type === 'scrub_video') {
 				if (msg.url) {
 					activeVideoCueId = msg.cueId || activeVideoCueId;
-					vid.muted = true;
+					applyStageAudio(msg);
 					vid.style.opacity = '1';
 					vid.style.display = 'block';
 					if (vid.getAttribute('data-url') !== msg.url) {
@@ -3137,7 +3201,7 @@ export function GetVideoStageHtml(): string {
 				vid.pause();
 			} else if (msg.type === 'resume_video') {
 				if (msg.cueId && activeVideoCueId && msg.cueId !== activeVideoCueId) return;
-				vid.muted = true;
+				applyStageAudio(msg);
 				vid.style.display = 'block';
 				vid.play().catch(err => stageLog('resume play rejected: ' + err));
 			} else if (msg.type === 'stop_video') {

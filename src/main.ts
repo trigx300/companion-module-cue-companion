@@ -11,6 +11,7 @@ import { GetFeedbacks } from './feedbacks'
 import { GetVariableDefinitions } from './variables'
 import { GetPresets } from './presets'
 import { GetCueCompanionWebUiHtml, GetVideoStageHtml } from './webui'
+import { ensurePiStageKiosk, isRaspberryPi, stopPiStageKiosk } from './pi-kiosk'
 
 export interface DetectedDisplay {
 	index: number
@@ -47,6 +48,10 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 	private sseClients: Set<http.ServerResponse> = new Set()
 	private stageProcesses: Map<number, ChildProcess> = new Map()
 	private tickTimer: NodeJS.Timeout | null = null
+	private piKioskChain: Promise<void> = Promise.resolve()
+	private piKioskState: 'off' | 'starting' | 'ready' | 'failed' = 'off'
+	private piKioskDisabled = new Set<number>()
+	public piKioskMessage = ''
 	private lastPanicTime = 0
 	private isPanicking = false
 	private panicElapsed = 0
@@ -124,6 +129,8 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		this.startTickLoop()
 
 		this.syncCompanionState()
+		this.piKioskDisabled.clear()
+		this.enqueuePiKiosk('ensure')
 	}
 
 	async destroy(): Promise<void> {
@@ -150,6 +157,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		this.config = config
 		if (portChanged) {
 			await this.startWebServer()
+			this.enqueuePiKiosk('ensure')
 		}
 		this.syncCompanionState()
 	}
@@ -425,6 +433,13 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		return `linear-gradient(${angle}deg, ${c1} 0%, ${c2} 100%)`
 	}
 
+	private cueOutputGain(cue: Cue): number {
+		const cueDb = cue.currentVolumeDb !== undefined ? Number(cue.currentVolumeDb) : Number(cue.volumeDb) || 0
+		const totalDb = cueDb + (Number(this.masterVolumeDb) || 0)
+		if (!Number.isFinite(totalDb) || totalDb <= -60) return 0
+		return Math.max(0, Math.min(1, Math.pow(10, totalDb / 20)))
+	}
+
 	private computeVideoOpacity(cue: Cue): number {
 		const dur = Number(cue.duration) || 0
 		const elapsed = Number(cue.actionElapsed) || 0
@@ -458,12 +473,14 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			case 'video': {
 				const fp = cue.filePath || ''
 				if (fp && !fp.startsWith('synth:')) {
+					this.log('info', `Stage video cue ${cue.qNumber}: ${fp}`)
 					const url = fp.startsWith('http') || fp.startsWith('/') ? fp : `/media/${encodeURIComponent(fp)}`
 					const startSec = Number(cue.startTime) || 0
 					const endSec = Number(cue.endTime) || Number(cue.duration) || 0
 					const isLoop = cue.loopMode === 'infinite_loop' || !!cue.loop
 					const pauseAtEnd = cue.loopMode === 'pause_at_end'
 					const initOpacity = (Number(cue.fadeIn) || 0) > 0 ? 0 : 1
+					const initGain = initOpacity <= 0 ? 0 : this.cueOutputGain(cue)
 					this.broadcastStageEvent({
 						type: 'play_video',
 						cueId: cue.id,
@@ -476,7 +493,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 						opacity: initOpacity,
 						loop: isLoop,
 						pauseAtEnd,
-						volume: 0,
+						volume: initGain,
 						targetScreens: cue.targetScreens || 'all',
 					})
 				}
@@ -761,6 +778,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 							type: 'video_opacity',
 							cueId: c.id,
 							opacity: this.computeVideoOpacity(c),
+							volume: this.cueOutputGain(c),
 							targetScreens: c.targetScreens || 'all',
 						})
 					}
@@ -830,6 +848,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 									type: 'video_opacity',
 									cueId: target.id,
 									opacity: this.computeVideoOpacity(target),
+									volume: this.cueOutputGain(target),
 									targetScreens: target.targetScreens || 'all',
 								})
 							}
@@ -858,6 +877,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 								type: 'video_opacity',
 								cueId: cue.id,
 								opacity: this.computeVideoOpacity(cue),
+								volume: this.cueOutputGain(cue),
 								targetScreens: cue.targetScreens || 'all',
 							})
 						}
@@ -974,7 +994,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		this.httpServer.listen(port, '0.0.0.0', () => {
 			const url = `http://${ResolveCompanionHost(this.config.companionHost)}:${port}`
 			this.log('info', `Cue Companion Web Workspace live at ${url}`)
-			this.updateStatus(InstanceStatus.Ok, `Ready (${url})`)
+			this.publishReadyStatus()
 		})
 	}
 
@@ -1023,13 +1043,14 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		if (req.method === 'GET' && pathname === '/api/screens') {
 			this.refreshConnectedScreens(() => {
 				res.writeHead(200, { 'Content-Type': 'application/json' })
-				res.end(
-					JSON.stringify({
-						ok: true,
-						screens: this.detectedDisplays,
-						activeStageScreens: this.getActiveStageScreenIndices(),
-					})
-				)
+					res.end(
+						JSON.stringify({
+							ok: true,
+							screens: this.detectedDisplays,
+							activeStageScreens: this.getActiveStageScreenIndices(),
+							kioskMessage: this.piKioskMessage,
+						})
+					)
 			})
 			return
 		}
@@ -1085,7 +1106,9 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 					'Access-Control-Allow-Origin': '*',
 				})
 				const stream = fs.createReadStream(filePath, { start: clampedStart, end: clampedEnd })
-				req.on('close', () => stream.destroy())
+				res.on('close', () => {
+					if (!res.writableEnded) stream.destroy()
+				})
 				stream.pipe(res)
 			} else {
 				res.writeHead(200, {
@@ -1095,7 +1118,9 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 					'Access-Control-Allow-Origin': '*',
 				})
 				const stream = fs.createReadStream(filePath)
-				req.on('close', () => stream.destroy())
+				res.on('close', () => {
+					if (!res.writableEnded) stream.destroy()
+				})
 				stream.pipe(res)
 			}
 			return
@@ -1497,6 +1522,18 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		if (pathname === '/api/stage/launch') {
 			const screenIndex = Number(body.screenIndex) || 0
 			const fullscreen = body.fullscreen !== false
+			if (isRaspberryPi()) {
+				this.piKioskDisabled.delete(screenIndex)
+				this.enqueuePiKiosk('ensure')
+				return {
+					kiosk: true,
+					launched: this.piKioskState === 'ready',
+					message: this.piKioskMessage || 'Starting the HDMI stage on this Pi.',
+					screenIndex,
+					fullscreen,
+					activeStageScreens: this.getActiveStageScreenIndices(),
+				}
+			}
 			this.refreshConnectedScreens(() => {
 				this.launchNativeStageWindow(screenIndex, fullscreen)
 				this.broadcastState(false)
@@ -1515,6 +1552,8 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			this.closeNativeStageWindow(screenIndex)
 			this.broadcastState(false)
 			return {
+				kiosk: isRaspberryPi(),
+				message: this.piKioskMessage,
 				screenIndex,
 				activeStageScreens: this.getActiveStageScreenIndices(),
 			}
@@ -1603,6 +1642,88 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 
 	public getActiveStageScreenIndices(): number[] {
 		return Array.from(this.activeStageSet)
+	}
+
+	private publishReadyStatus(): void {
+		const port = Number(this.config?.webPort) || 8090
+		const url = `http://${ResolveCompanionHost(this.config?.companionHost)}:${port}`
+		if (!isRaspberryPi()) {
+			this.updateStatus(InstanceStatus.Ok, `Ready (${url})`)
+			return
+		}
+		if (this.piKioskState === 'ready') {
+			this.updateStatus(InstanceStatus.Ok, `Ready (${url}) — HDMI stage on`)
+			return
+		}
+		if (this.piKioskState === 'failed') {
+			this.updateStatus(InstanceStatus.UnknownWarning, this.piKioskMessage || 'HDMI stage failed')
+			return
+		}
+		if (this.piKioskState === 'starting') {
+			this.updateStatus(InstanceStatus.Connecting, this.piKioskMessage || 'Starting the HDMI stage')
+			return
+		}
+		this.updateStatus(InstanceStatus.Ok, `Ready (${url})`)
+	}
+
+	private markKioskScreensActive(): void {
+		const indices = this.detectedDisplays
+			.map((display) => display.index)
+			.filter((index) => !this.piKioskDisabled.has(index))
+		this.activeStageSet = new Set(indices)
+	}
+
+	private enqueuePiKiosk(action: 'ensure' | 'stop'): void {
+		if (!isRaspberryPi()) return
+		if (action === 'ensure' && this.piKioskState !== 'ready') {
+			this.piKioskState = 'starting'
+			this.piKioskMessage =
+				'Opening the HDMI stage in Chromium. Cage replaces the console shell once the browser is up.'
+			this.publishReadyStatus()
+			this.broadcastState(false)
+		}
+		const scriptDir = path.join(this.dataDir, 'pi-kiosk')
+		this.piKioskChain = this.piKioskChain
+			.then(async () => {
+				if (action === 'stop') {
+					await stopPiStageKiosk(scriptDir, (level, message) => this.log(level, message))
+					this.piKioskState = 'off'
+					this.piKioskMessage = 'HDMI stage closed. The console shell is back on the Pi display.'
+					this.activeStageSet.clear()
+					this.publishReadyStatus()
+					this.broadcastState(false)
+					return
+				}
+				const result = await ensurePiStageKiosk({
+					port: Number(this.config.webPort) || 8090,
+					disabled: Array.from(this.piKioskDisabled),
+					scriptDir,
+					log: (level, message) => this.log(level, message),
+				})
+				if (result.ok) {
+					this.piKioskState = 'ready'
+					this.piKioskMessage = result.message
+					this.markKioskScreensActive()
+				} else {
+					this.piKioskState = 'failed'
+					this.piKioskMessage = result.message
+				}
+				this.publishReadyStatus()
+				this.broadcastState(false)
+				if (result.ok) {
+					this.refreshConnectedScreens(() => {
+						this.markKioskScreensActive()
+						this.broadcastState(false)
+					})
+				}
+			})
+			.catch((err) => {
+				this.piKioskState = 'failed'
+				this.piKioskMessage = 'HDMI stage setup failed. The Companion log has the details.'
+				this.log('error', `HDMI stage setup failed: ${err}`)
+				this.publishReadyStatus()
+				this.broadcastState(false)
+			})
 	}
 
 	private refreshConnectedScreens(done?: () => void): void {
@@ -1886,6 +2007,20 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 	}
 
 	private closeNativeStageWindow(screenIndex: number): void {
+		if (isRaspberryPi()) {
+			this.piKioskDisabled.add(screenIndex)
+			this.activeStageSet.delete(screenIndex)
+			const anyLeft = this.detectedDisplays.some((display) => !this.piKioskDisabled.has(display.index))
+			if (!anyLeft) {
+				this.piKioskDisabled.clear()
+				this.activeStageSet.clear()
+				this.piKioskMessage = 'Closing the HDMI stage and bringing the console shell back.'
+				this.enqueuePiKiosk('stop')
+			} else {
+				this.enqueuePiKiosk('ensure')
+			}
+			return
+		}
 		this.activeStageSet.delete(screenIndex)
 		const existing = this.stageProcesses.get(screenIndex)
 		if (existing) {
@@ -1908,6 +2043,9 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 	}
 
 	private launchNativeStageWindow(screenIndex: number, fullscreen: boolean): boolean {
+		if (isRaspberryPi()) {
+			return false
+		}
 		const exe = this.findChromiumExecutable()
 		if (!exe) {
 			this.log('warn', 'No Chromium/Chrome/Edge executable found for native multi-screen stage launch')
@@ -2111,6 +2249,7 @@ Write-Output "Loop finished at attempt $attempt"
 			masterVolumeDb: this.masterVolumeDb,
 			screens: this.detectedDisplays,
 			activeStageScreens: this.getActiveStageScreenIndices(),
+			kioskMessage: this.piKioskMessage,
 			fullRefresh,
 		})
 		client.write(`data: ${payload}\n\n`)
@@ -2156,7 +2295,7 @@ Write-Output "Loop finished at attempt $attempt"
 						loop: activeVid.loopMode === 'infinite_loop' || !!activeVid.loop,
 						pauseAtEnd: activeVid.loopMode === 'pause_at_end',
 						paused: activeVid.state === 'paused',
-						volume: 0,
+						volume: this.cueOutputGain(activeVid),
 						targetScreens: activeVid.targetScreens || 'all',
 					},
 				})

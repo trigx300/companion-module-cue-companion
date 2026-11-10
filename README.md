@@ -35,14 +35,14 @@ It provides a browser-based cue list and show-control engine with multi-screen s
 ### Option 1: Import Module Package into Bitfocus Companion (`.tgz`)
 1. Open the **Bitfocus Companion** admin UI (`http://localhost:8000`).
 2. Navigate to the **Modules** tab.
-3. Click **Import module package** and select **`cue-companion-1.1.0.tgz`**.
+3. Click **Import module package** and select **`cue-companion-1.2.0.tgz`**.
 4. Add a new **Cue Companion** connection under **Connections**.
 
 ### Option 2: Direct Installed Module Folder
-Copy the **`cue-companion-1.1.0`** folder directly into your Companion modules directory:
-- **Windows**: `%APPDATA%\companion\modules\cue-companion-1.1.0`
-- **macOS**: `~/Library/Application Support/companion/modules/cue-companion-1.1.0`
-- **Linux**: `~/.config/companion/modules/cue-companion-1.1.0`
+Copy the **`cue-companion-1.2.0`** folder directly into your Companion modules directory:
+- **Windows**: `%APPDATA%\companion\modules\cue-companion-1.2.0`
+- **macOS**: `~/Library/Application Support/companion/modules/cue-companion-1.2.0`
+- **Linux**: `~/.config/companion/modules/cue-companion-1.2.0`
 
 Then restart Bitfocus Companion.
 
