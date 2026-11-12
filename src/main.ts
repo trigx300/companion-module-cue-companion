@@ -11,7 +11,15 @@ import { GetFeedbacks } from './feedbacks'
 import { GetVariableDefinitions } from './variables'
 import { GetPresets } from './presets'
 import { GetCueCompanionWebUiHtml, GetVideoStageHtml } from './webui'
-import { ensurePiStageKiosk, isRaspberryPi, stopPiStageKiosk } from './pi-kiosk'
+import { ensurePiStageKiosk, isRaspberryPi, relaunchPiStageKiosk, stopPiStageKiosk } from './pi-kiosk'
+import { HostAudio } from './audio-output'
+
+// 32x32 transparent PNG. Chromium on Wayland ignores cursor:none and draws an
+// arrow unless the page gives it a real cursor image when the stage opens.
+const BLANK_CURSOR_PNG = Buffer.from(
+	'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAHElEQVR42u3BAQEAAAjDoNm/tEEOVF0AAADAsgcgPAACkdngMQAAAABJRU5ErkJggg==',
+	'base64',
+)
 
 export interface DetectedDisplay {
 	index: number
@@ -59,6 +67,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 	private mediaDir: string
 	private projectsDir: string
 	private showFilePath: string
+	private audio!: HostAudio
 
 	constructor(internal: unknown) {
 		super(internal)
@@ -125,6 +134,11 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		this.setVariableDefinitions(GetVariableDefinitions())
 		this.setPresetDefinitions(GetPresets())
 
+		this.audio = new HostAudio(this.dataDir, (level, message) => this.log(level, message))
+		this.audio.load()
+		this.audio.refresh()
+		this.audio.prepareAlsaOverride()
+
 		await this.startWebServer()
 		this.startTickLoop()
 
@@ -178,7 +192,25 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			bgColor2: c.bgColor2 || '#1e3a8a',
 			bgAngle: c.bgAngle !== undefined ? Number(c.bgAngle) : 135,
 			targetScreens: c.targetScreens || 'all',
+			stageX: Number.isFinite(Number(c.stageX)) ? Number(c.stageX) : 0,
+			stageY: Number.isFinite(Number(c.stageY)) ? Number(c.stageY) : 0,
+			stageWidth: c.stageWidth === undefined || c.stageWidth === null ? 100 : Number(c.stageWidth),
+			stageHeight: c.stageHeight === undefined || c.stageHeight === null ? 100 : Number(c.stageHeight),
+			stageRotate: Number.isFinite(Number(c.stageRotate)) ? Number(c.stageRotate) : 0,
+			stageZ: c.stageZ === undefined || c.stageZ === null ? 1 : Number(c.stageZ),
 			pauseAtTime: Number(c.pauseAtTime) || 0,
+			audioFadeIn:
+				c.type === 'video'
+					? c.audioFadeIn !== undefined && c.audioFadeIn !== null
+						? Number(c.audioFadeIn)
+						: Number(c.fadeIn) || 0
+					: c.audioFadeIn,
+			audioFadeOut:
+				c.type === 'video'
+					? c.audioFadeOut !== undefined && c.audioFadeOut !== null
+						? Number(c.audioFadeOut)
+						: Number(c.fadeOut) || 0
+					: c.audioFadeOut,
 			state: 'idle',
 			preWaitElapsed: 0,
 			actionElapsed: 0,
@@ -306,9 +338,12 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			this.triggerPause('resume')
 		}
 
-		// Reset any currently playing or held media cues when hitting GO to move to the next cue
+		// Audio cues still replace each other. Video cues layer, so a second GO
+		// keeps the earlier picture on stage for multiview and picture-in-picture.
 		const standby = this.getStandbyCue()
 		for (const activeCue of this.cues) {
+			if (activeCue.type === 'video' && activeCue.id !== standby?.id) continue
+			if (activeCue.type === 'audio' && standby?.type === 'video') continue
 			if (
 				activeCue.state &&
 				activeCue.state !== 'idle' &&
@@ -354,6 +389,117 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		this.fireCue(standby)
 		this.broadcastState(false)
 		this.syncCompanionState()
+	}
+
+	private normalizeGroupOrder(): void {
+		const children = new Map<string, Cue[]>()
+		const roots: Cue[] = []
+		const groups = new Set(this.cues.filter((c) => c.type === 'group').map((c) => c.id))
+		for (const cue of this.cues) {
+			if (cue.parentId && groups.has(cue.parentId) && cue.type !== 'group') {
+				const list = children.get(cue.parentId) || []
+				list.push(cue)
+				children.set(cue.parentId, list)
+			} else {
+				cue.parentId = null
+				roots.push(cue)
+			}
+		}
+		const next: Cue[] = []
+		for (const root of roots) {
+			next.push(root)
+			if (root.type === 'group') {
+				for (const child of children.get(root.id) || []) next.push(child)
+			}
+		}
+		this.cues = next
+	}
+
+	private assignCuesToGroup(ids: string[], parentId: string | null): void {
+		const wanted = new Set(ids)
+		const parent = parentId ? this.cues.find((c) => c.id === parentId && c.type === 'group') : undefined
+		for (const cue of this.cues) {
+			if (!wanted.has(cue.id) || cue.type === 'group') continue
+			cue.parentId = parent ? parent.id : null
+		}
+		this.normalizeGroupOrder()
+	}
+
+	private moveGroupBlock(group: Cue, dir: number): void {
+		this.normalizeGroupOrder()
+		const blocks: Cue[][] = []
+		for (const cue of this.cues) {
+			if (cue.parentId && cue.type !== 'group' && blocks.length > 0) {
+				blocks[blocks.length - 1].push(cue)
+			} else {
+				blocks.push([cue])
+			}
+		}
+		const index = blocks.findIndex((block) => block[0].id === group.id)
+		const swapWith = index + dir
+		if (index < 0 || swapWith < 0 || swapWith >= blocks.length) return
+		const current = blocks[index]
+		blocks[index] = blocks[swapWith]
+		blocks[swapWith] = current
+		this.cues = blocks.flat()
+	}
+
+	private moveCueStep(cue: Cue, dir: number): void {
+		this.normalizeGroupOrder()
+		const i = this.cues.findIndex((c) => c.id === cue.id)
+		if (i < 0) return
+		const j = i + dir
+		const other = j >= 0 && j < this.cues.length ? this.cues[j] : undefined
+
+		if (dir > 0) {
+			if (!other) {
+				cue.parentId = null
+				return
+			}
+			if (cue.parentId && other.parentId === cue.parentId) {
+				this.cues[i] = other
+				this.cues[j] = cue
+				return
+			}
+			if (cue.parentId) {
+				cue.parentId = null
+				return
+			}
+			if (other.type === 'group') {
+				cue.parentId = other.id
+				return
+			}
+			if (other.parentId) {
+				cue.parentId = other.parentId
+				return
+			}
+			this.cues[i] = other
+			this.cues[j] = cue
+			return
+		}
+
+		if (!other) {
+			cue.parentId = null
+			return
+		}
+		if (cue.parentId && other.parentId === cue.parentId) {
+			this.cues[i] = other
+			this.cues[j] = cue
+			return
+		}
+		if (cue.parentId && other.id === cue.parentId) {
+			cue.parentId = null
+			this.cues.splice(i, 1)
+			const groupIndex = this.cues.findIndex((c) => c.id === other.id)
+			this.cues.splice(Math.max(0, groupIndex), 0, cue)
+			return
+		}
+		if (!cue.parentId && (other.parentId || other.type === 'group')) {
+			cue.parentId = other.type === 'group' ? other.id : other.parentId
+			return
+		}
+		this.cues[i] = other
+		this.cues[j] = cue
 	}
 
 	private advancePlayheadFrom(cueId: string): void {
@@ -440,6 +586,16 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		return Math.max(0, Math.min(1, Math.pow(10, totalDb / 20)))
 	}
 
+	private audioFadeInOf(cue: Cue): number {
+		if (cue.type === 'video') return Number(cue.audioFadeIn ?? cue.fadeIn) || 0
+		return Number(cue.fadeIn) || 0
+	}
+
+	private audioFadeOutOf(cue: Cue): number {
+		if (cue.type === 'video') return Number(cue.audioFadeOut ?? cue.fadeOut) || 0
+		return Number(cue.fadeOut) || 0
+	}
+
 	private computeVideoOpacity(cue: Cue): number {
 		const dur = Number(cue.duration) || 0
 		const elapsed = Number(cue.actionElapsed) || 0
@@ -457,12 +613,22 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 				op = Math.min(op, Math.max(0, rem / fadeOut))
 			}
 		}
-		if (cue.currentVolumeDb !== undefined && cue.volumeDb !== undefined && cue.currentVolumeDb < cue.volumeDb - 0.5) {
-			const span = Math.max(1, (cue.volumeDb ?? 0) - -60)
-			const faderRatio = Math.max(0, Math.min(1, (cue.currentVolumeDb - -60) / span))
-			op = Math.min(op, faderRatio)
-		}
 		return Number(op.toFixed(3))
+	}
+
+	private videoLayout(cue: Cue): { x: number; y: number; width: number; height: number; rotate: number; z: number } {
+		const num = (value: number | undefined, fallback: number) => {
+			const n = Number(value)
+			return Number.isFinite(n) ? n : fallback
+		}
+		return {
+			x: num(cue.stageX, 0),
+			y: num(cue.stageY, 0),
+			width: cue.stageWidth === undefined || cue.stageWidth === null ? 100 : num(cue.stageWidth, 100),
+			height: cue.stageHeight === undefined || cue.stageHeight === null ? 100 : num(cue.stageHeight, 100),
+			rotate: num(cue.stageRotate, 0),
+			z: cue.stageZ === undefined || cue.stageZ === null ? 1 : num(cue.stageZ, 1),
+		}
 	}
 
 	private beginCueAction(cue: Cue): void {
@@ -480,7 +646,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 					const isLoop = cue.loopMode === 'infinite_loop' || !!cue.loop
 					const pauseAtEnd = cue.loopMode === 'pause_at_end'
 					const initOpacity = (Number(cue.fadeIn) || 0) > 0 ? 0 : 1
-					const initGain = initOpacity <= 0 ? 0 : this.cueOutputGain(cue)
+					const initGain = this.audioFadeInOf(cue) > 0 ? 0 : this.cueOutputGain(cue)
 					this.broadcastStageEvent({
 						type: 'play_video',
 						cueId: cue.id,
@@ -494,6 +660,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 						loop: isLoop,
 						pauseAtEnd,
 						volume: initGain,
+						layout: this.videoLayout(cue),
 						targetScreens: cue.targetScreens || 'all',
 					})
 				}
@@ -636,29 +803,34 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		}
 	}
 
+	/**
+	 * Panic must silence the HDMI <video> even when a per-cue stop was ignored.
+	 * The Pi kiosk treats all:true as "release the decoder", not just hide it.
+	 */
+	private broadcastPanicStageStop(): void {
+		this.broadcastStageEvent({
+			type: 'stop_video',
+			all: true,
+			targetScreens: 'all',
+		})
+	}
+
 	public triggerPanic(): void {
-		const now = Date.now()
-		const fadeTime = Number(this.config.panicFadeDuration) ?? 2.0
-
-		if ((this.isPanicking && now - this.lastPanicTime < 3000) || fadeTime <= 0) {
-			this.log('info', 'PANIC (Hard Cut): Stopping all cues immediately')
-			this.isPanicking = false
-			this.isPaused = false
-			for (const c of this.cues) {
-				this.stopCue(c)
-			}
-			this.broadcastState(false)
-			this.syncCompanionState()
-			return
-		}
-
-		this.log('info', `PANIC (Fade Out over ${fadeTime}s): Press Panic again to hard-cut`)
-		this.lastPanicTime = now
-		this.isPanicking = true
+		this.log('info', 'PANIC: Stopping every cue and blacking the stage')
+		this.isPanicking = false
+		this.isPaused = false
 		this.panicElapsed = 0
-		for (const c of this.getActiveCues()) {
-			c.fadeStartVolumeDb = c.currentVolumeDb ?? c.volumeDb ?? 0
+		for (const cue of this.cues) {
+			this.stopCue(cue)
 		}
+		this.broadcastPanicStageStop()
+		this.broadcastStageEvent({
+			type: 'clear_background',
+			all: true,
+			targetScreens: 'all',
+		})
+		this.broadcastState(false)
+		this.syncCompanionState()
 	}
 
 	public triggerPause(mode: 'toggle' | 'pause' | 'resume'): void {
@@ -786,6 +958,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 				if (t >= 1) {
 					this.isPanicking = false
 					for (const c of active) this.stopCue(c)
+					this.broadcastPanicStageStop()
 				}
 				this.broadcastState(false)
 				this.syncCompanionState()
@@ -858,8 +1031,8 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 					// Handle Fade-In and Fade-Out envelope on Audio/Video cues
 					const isLooping = cue.loopMode === 'infinite_loop' || cue.loop
 					if ((cue.type === 'audio' || cue.type === 'video') && cue.duration > 0) {
-						const fadeInDur = Number(cue.fadeIn) || 0
-						const fadeOutDur = Number(cue.fadeOut) || 0
+						const fadeInDur = this.audioFadeInOf(cue)
+						const fadeOutDur = this.audioFadeOutOf(cue)
 						const rem = cue.duration - cue.actionElapsed
 
 						if (fadeInDur > 0 && cue.actionElapsed <= fadeInDur) {
@@ -1014,6 +1187,17 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			return
 		}
 
+		if (req.method === 'GET' && pathname === '/blank-cursor.png') {
+			res.writeHead(200, {
+				'Content-Type': 'image/png',
+				'Content-Length': BLANK_CURSOR_PNG.length,
+				'Cache-Control': 'no-cache',
+				'Access-Control-Allow-Origin': '*',
+			})
+			res.end(BLANK_CURSOR_PNG)
+			return
+		}
+
 		if (req.method === 'GET' && pathname === '/api/projects') {
 			res.writeHead(200, { 'Content-Type': 'application/json' })
 			res.end(
@@ -1037,6 +1221,13 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 				'Content-Disposition': `attachment; filename="${downloadName}"`,
 			})
 			res.end(JSON.stringify(payload, null, 2))
+			return
+		}
+
+		if (req.method === 'GET' && pathname === '/api/audio-outputs') {
+			const listed = this.audio.refresh()
+			res.writeHead(200, { 'Content-Type': 'application/json' })
+			res.end(JSON.stringify(listed))
 			return
 		}
 
@@ -1259,6 +1450,23 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 				if (body.updates.pauseAtTime !== undefined) {
 					cue.pauseAtTimeTriggered = false
 				}
+				if (body.updates.parentId !== undefined) {
+					this.assignCuesToGroup([cue.id], body.updates.parentId || null)
+				}
+				const layoutKeys = ['stageX', 'stageY', 'stageWidth', 'stageHeight', 'stageRotate', 'stageZ']
+				if (
+					cue.type === 'video' &&
+					cue.state &&
+					cue.state !== 'idle' &&
+					layoutKeys.some((key) => body.updates[key] !== undefined)
+				) {
+					this.broadcastStageEvent({
+						type: 'video_layout',
+						cueId: cue.id,
+						layout: this.videoLayout(cue),
+						targetScreens: cue.targetScreens || 'all',
+					})
+				}
 				this.saveWorkspaceToDisk()
 				this.broadcastState(true)
 				this.syncCompanionState()
@@ -1334,6 +1542,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 						c.parentId = groupId
 					}
 				}
+				this.normalizeGroupOrder()
 
 				this.saveWorkspaceToDisk()
 				this.broadcastState(true)
@@ -1402,11 +1611,19 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 				loopMode: type === 'background' ? 'pause_at_end' : 'one_shot',
 				fadeIn: 0,
 				fadeOut: 0,
+				audioFadeIn: type === 'video' ? 0 : undefined,
+				audioFadeOut: type === 'video' ? 0 : undefined,
 				bgStyle: 'linear-gradient',
 				bgColor1: '#0f172a',
 				bgColor2: '#1e3a8a',
 				bgAngle: 135,
 				targetScreens: 'all',
+				stageX: 0,
+				stageY: 0,
+				stageWidth: 100,
+				stageHeight: 100,
+				stageRotate: 0,
+				stageZ: 1,
 				targetCueId: autoTargetId,
 				stopTargetWhenDone: type === 'fade',
 				companionPage: 1,
@@ -1436,23 +1653,13 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 			const ids: string[] = Array.isArray(body.cueIds) && body.cueIds.length > 0 ? body.cueIds : body.cueId ? [body.cueId] : []
 			const dir = Number(body.direction) || 0
 			if (ids.length === 0 || dir === 0) return
-
-			if (dir < 0) {
-				for (let i = 1; i < this.cues.length; i++) {
-					if (ids.includes(this.cues[i].id) && !ids.includes(this.cues[i - 1].id)) {
-						const temp = this.cues[i - 1]
-						this.cues[i - 1] = this.cues[i]
-						this.cues[i] = temp
-					}
-				}
-			} else {
-				for (let i = this.cues.length - 2; i >= 0; i--) {
-					if (ids.includes(this.cues[i].id) && !ids.includes(this.cues[i + 1].id)) {
-						const temp = this.cues[i + 1]
-						this.cues[i + 1] = this.cues[i]
-						this.cues[i] = temp
-					}
-				}
+			const step = dir < 0 ? -1 : 1
+			const ordered = this.cues.filter((c) => ids.includes(c.id))
+			const list = step < 0 ? ordered : [...ordered].reverse()
+			for (const cue of list) {
+				if (cue.type === 'group') this.moveGroupBlock(cue, step)
+				else this.moveCueStep(cue, step)
+				this.normalizeGroupOrder()
 			}
 			this.saveWorkspaceToDisk()
 			this.broadcastState(true)
@@ -1501,15 +1708,38 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 
 		if (pathname === '/api/cue/batch_group') {
 			const ids: string[] = Array.isArray(body.cueIds) ? body.cueIds : []
-			const parentId: string | null = body.parentId || null
-			for (const c of this.cues) {
-				if (ids.includes(c.id) && c.id !== parentId) {
-					c.parentId = parentId
-				}
-			}
+			this.assignCuesToGroup(ids, body.parentId || null)
 			this.saveWorkspaceToDisk()
 			this.broadcastState(true)
 			return
+		}
+
+		if (pathname === '/api/audio-output') {
+			const result = this.audio.select(String(body.id || 'default'))
+			if (result.relaunchKiosk && isRaspberryPi()) {
+				this.enqueuePiKiosk('relaunch')
+			}
+			this.broadcastStageEvent({
+				type: 'set_audio_output',
+				sinkId: this.audio.sinkIdForSelected(),
+				label: this.audio.selectedLabel(),
+			})
+			this.broadcastState(false)
+			return result
+		}
+
+		if (pathname === '/api/audio/browser-devices') {
+			const devices = Array.isArray(body.devices) ? body.devices : []
+			this.audio.noteBrowserDevices(devices)
+			const sinkId = this.audio.sinkIdForSelected()
+			if (this.audio.selectedId === 'default' || sinkId) {
+				this.broadcastStageEvent({
+					type: 'set_audio_output',
+					sinkId,
+					label: this.audio.selectedLabel(),
+				})
+			}
+			return { ok: true, sinkId }
 		}
 
 		if (pathname === '/api/stage/broadcast') {
@@ -1673,12 +1903,18 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 		this.activeStageSet = new Set(indices)
 	}
 
-	private enqueuePiKiosk(action: 'ensure' | 'stop'): void {
+	private enqueuePiKiosk(action: 'ensure' | 'stop' | 'relaunch'): void {
 		if (!isRaspberryPi()) return
 		if (action === 'ensure' && this.piKioskState !== 'ready') {
 			this.piKioskState = 'starting'
 			this.piKioskMessage =
 				'Opening the HDMI stage in Chromium. Cage replaces the console shell once the browser is up.'
+			this.publishReadyStatus()
+			this.broadcastState(false)
+		}
+		if (action === 'relaunch') {
+			this.piKioskState = 'starting'
+			this.piKioskMessage = 'Restarting the HDMI stage on the selected audio output.'
 			this.publishReadyStatus()
 			this.broadcastState(false)
 		}
@@ -1694,12 +1930,16 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 					this.broadcastState(false)
 					return
 				}
-				const result = await ensurePiStageKiosk({
-					port: Number(this.config.webPort) || 8090,
-					disabled: Array.from(this.piKioskDisabled),
-					scriptDir,
-					log: (level, message) => this.log(level, message),
-				})
+				const port = Number(this.config.webPort) || 8090
+				const result =
+					action === 'relaunch'
+						? await relaunchPiStageKiosk(port, (level, message) => this.log(level, message))
+						: await ensurePiStageKiosk({
+								port,
+								disabled: Array.from(this.piKioskDisabled),
+								scriptDir,
+								log: (level, message) => this.log(level, message),
+							})
 				if (result.ok) {
 					this.piKioskState = 'ready'
 					this.piKioskMessage = result.message
@@ -2107,7 +2347,7 @@ export class CueCompanionInstance extends InstanceBase<CueCompanionConfig> {
 					unixArgs.push('--start-fullscreen', '--kiosk')
 				}
 
-				const env: NodeJS.ProcessEnv = { ...process.env }
+				const env: NodeJS.ProcessEnv = { ...process.env, ...this.audio.stageProcessEnv() }
 				if (process.platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
 					env.DISPLAY = ':0'
 				}
@@ -2250,6 +2490,9 @@ Write-Output "Loop finished at attempt $attempt"
 			screens: this.detectedDisplays,
 			activeStageScreens: this.getActiveStageScreenIndices(),
 			kioskMessage: this.piKioskMessage,
+			audioOutputs: this.audio ? this.audio.outputs : [],
+			audioOutputId: this.audio ? this.audio.selectedId : 'default',
+			audioMessage: this.audio ? this.audio.message : '',
 			fullRefresh,
 		})
 		client.write(`data: ${payload}\n\n`)
@@ -2271,10 +2514,9 @@ Write-Output "Loop finished at attempt $attempt"
 				client.write(`data: ${bgEvt}\n\n`)
 			}
 
-			const activeVid = [...this.cues]
-				.reverse()
-				.find((c) => c.type === 'video' && (c.state === 'running' || c.state === 'paused'))
-			if (activeVid && activeVid.filePath && !activeVid.filePath.startsWith('synth:')) {
+			for (const activeVid of this.cues) {
+				if (activeVid.type !== 'video' || (activeVid.state !== 'running' && activeVid.state !== 'paused')) continue
+				if (!activeVid.filePath || activeVid.filePath.startsWith('synth:')) continue
 				const fp = activeVid.filePath
 				const url = fp.startsWith('http') || fp.startsWith('/') ? fp : `/media/${encodeURIComponent(fp)}`
 				const startSec = Number(activeVid.startTime) || 0
@@ -2296,6 +2538,7 @@ Write-Output "Loop finished at attempt $attempt"
 						pauseAtEnd: activeVid.loopMode === 'pause_at_end',
 						paused: activeVid.state === 'paused',
 						volume: this.cueOutputGain(activeVid),
+						layout: this.videoLayout(activeVid),
 						targetScreens: activeVid.targetScreens || 'all',
 					},
 				})

@@ -896,6 +896,24 @@ export function GetCueCompanionWebUiHtml(): string {
 		</div>
 	</div>
 
+	<!-- AUDIO OUTPUT -->
+	<div class="screen-Modal" id="audioManagerModal">
+		<div class="screen-modal-card">
+			<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2e3440;padding-bottom:8px;">
+				<div style="font-weight:700;font-size:14px;">🔊 Stage Audio Output</div>
+				<button class="tool-btn" onclick="closeAudioModal()">✕ Close</button>
+			</div>
+			<div style="font-size:12px;color:var(--text-muted);line-height:1.4;">
+				Pick where the stage plays sound. The list is from the computer running Companion, so HDMI, headphones / TRS, USB, and the system default are the outputs on that machine.
+			</div>
+			<div id="audioOutputStatus" style="font-size:12px;color:#fbbf24;line-height:1.4;"></div>
+			<div id="audioOutputList" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;"></div>
+			<div style="display:flex;justify-content:flex-end;border-top:1px solid #2e3440;padding-top:10px;">
+				<button class="tool-btn" onclick="refreshAudioOutputs()">🔄 Refresh Outputs</button>
+			</div>
+		</div>
+	</div>
+
 	<!-- TOP CUE COMPANION HEADER -->
 	<div class="top-bar">
 		<div style="display:flex;flex-direction:column;justify-content:center;padding-right:8px;border-right:1px solid #383d48;">
@@ -989,9 +1007,10 @@ export function GetCueCompanionWebUiHtml(): string {
 			<span class="toolbar-group-label">Project & Setup:</span>
 			<label class="tool-btn" style="cursor:pointer;" title="Upload audio or video media files to use in cues">
 				📂 Upload Media
-				<input type="file" id="mediaUploadInput" accept="audio/*,video/*" style="display:none;" onchange="uploadMediaFile(this)" />
+				<input type="file" id="mediaUploadInput" accept="audio/*,video/*,.webm,video/webm" style="display:none;" onchange="uploadMediaFile(this)" />
 			</label>
 			<button class="tool-btn" style="background:#172b3a;border-color:#06b6d4;" onclick="openScreenModal()" title="Configure Video Stage Output & Multi-Screen Assignment">🖥️ Video Output & Screens</button>
+			<button class="tool-btn" style="background:#1e1b4b;border-color:#a78bfa;" onclick="openAudioModal()" title="Choose HDMI, headphones, USB, or another output on this computer">🔊 Audio Output</button>
 			<button class="tool-btn" style="background:#14532d;border-color:#22c55e;font-weight:700;" onclick="openProjectModal()" title="Save, Open, Import or Export Show Project (Ctrl+S)">💾 Save / Open Project</button>
 		</div>
 	</div>
@@ -1059,6 +1078,10 @@ export function GetCueCompanionWebUiHtml(): string {
 		{ index: 0, label: 'Screen 1 (Primary Display)', left: 0, top: 0, width: 1920, height: 1080, isPrimary: true }
 	];
 	const selectedStageScreenIndices = new Set([0]);
+	let audioOutputs = [];
+	let audioOutputId = 'default';
+	let audioMessage = '';
+	let audioRenderKey = '';
 	const stageBc = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('cue_companion_stage_channel') : null;
 
 	function broadcastToStage(msg, skipServer = false) {
@@ -1130,6 +1153,82 @@ export function GetCueCompanionWebUiHtml(): string {
 
 	function closeScreenModal() {
 		document.getElementById('screenManagerModal').classList.remove('open');
+	}
+
+	function escHtml(value) {
+		return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+	}
+
+	function openAudioModal() {
+		document.getElementById('audioManagerModal').classList.add('open');
+		refreshAudioOutputs();
+	}
+
+	function closeAudioModal() {
+		document.getElementById('audioManagerModal').classList.remove('open');
+	}
+
+	function audioListKey() {
+		return audioOutputId + '|' + audioMessage + '|' + audioOutputs.map((device) => device.id + (device.isSystemDefault ? '*' : '')).join(',');
+	}
+
+	function renderAudioModal() {
+		audioRenderKey = audioListKey();
+		const list = document.getElementById('audioOutputList');
+		const note = document.getElementById('audioOutputStatus');
+		if (note) note.textContent = audioMessage || '';
+		if (!list) return;
+		if (!audioOutputs.length) {
+			list.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No audio outputs reported yet.</div>';
+			return;
+		}
+		list.innerHTML = audioOutputs.map((device, index) => {
+			const selected = device.id === audioOutputId;
+			const badge = device.isSystemDefault ? ' · system default' : '';
+			const button = device.offline
+				? '<span style="font-size:11px;color:#f87171;">Offline</span>'
+				: '<button class="scrubber-btn" onclick="selectAudioOutput(' + index + ')">' + (selected ? 'In use' : 'Use') + '</button>';
+			return '<div class="screen-item" style="' + (selected ? 'border-color:#a78bfa;' : '') + '">' +
+				'<div><div style="font-weight:700;color:#fff;">' + escHtml(device.label) + badge + '</div>' +
+				'<div style="font-size:11px;color:var(--text-muted);">' + escHtml(device.detail || '') + '</div></div>' +
+				button + '</div>';
+		}).join('');
+	}
+
+	async function refreshAudioOutputs() {
+		const note = document.getElementById('audioOutputStatus');
+		if (note) note.textContent = 'Looking for audio outputs...';
+		try {
+			const res = await fetch('/api/audio-outputs');
+			const data = await res.json();
+			audioOutputs = data.outputs || [];
+			audioOutputId = data.selectedId || 'default';
+			audioMessage = data.message || '';
+		} catch (err) {
+			audioMessage = 'Could not list audio outputs.';
+		}
+		renderAudioModal();
+	}
+
+	async function selectAudioOutput(index) {
+		const device = audioOutputs[index];
+		if (!device || device.offline) return;
+		const note = document.getElementById('audioOutputStatus');
+		if (note) note.textContent = 'Switching audio output...';
+		try {
+			const res = await fetch('/api/audio-output', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id: device.id })
+			});
+			const data = await res.json();
+			if (Array.isArray(data.outputs)) audioOutputs = data.outputs;
+			if (data.selectedId) audioOutputId = data.selectedId;
+			audioMessage = data.message || '';
+		} catch (err) {
+			audioMessage = 'Could not switch audio output.';
+		}
+		renderAudioModal();
 	}
 
 	function toggleStageScreenSelect(idx, checked) {
@@ -1249,6 +1348,7 @@ export function GetCueCompanionWebUiHtml(): string {
 	let masterGainNode = null;
 	let analyserNode = null;
 	const activeAudioNodes = new Map(); // cueId -> { oscs, gainNode, panNode, mediaEl }
+	let panicHold = false;
 
 	function ensureAudioCtx() {
 		if (!audioCtx) {
@@ -1367,9 +1467,10 @@ export function GetCueCompanionWebUiHtml(): string {
 
 		const targetLin = dbToLinear(cue.volumeDb ?? 0);
 		const now = audioCtx.currentTime;
-		if (cue.fadeIn > 0) {
+		const audioIn = cue.type === 'video' ? Number(cue.audioFadeIn ?? cue.fadeIn) || 0 : Number(cue.fadeIn) || 0;
+		if (audioIn > 0) {
 			gainNode.gain.setValueAtTime(0.0001, now);
-			gainNode.gain.linearRampToValueAtTime(targetLin, now + Number(cue.fadeIn));
+			gainNode.gain.linearRampToValueAtTime(targetLin, now + audioIn);
 		} else {
 			gainNode.gain.setValueAtTime(targetLin, now);
 		}
@@ -1457,6 +1558,14 @@ export function GetCueCompanionWebUiHtml(): string {
 					loop: isLoop,
 					pauseAtEnd,
 					volume: 0, // Audio is routed through WebAudio master bus in workspace
+					layout: {
+						x: Number(cue.stageX) || 0,
+						y: Number(cue.stageY) || 0,
+						width: cue.stageWidth === undefined || cue.stageWidth === null ? 100 : Number(cue.stageWidth),
+						height: cue.stageHeight === undefined || cue.stageHeight === null ? 100 : Number(cue.stageHeight),
+						rotate: Number(cue.stageRotate) || 0,
+						z: cue.stageZ === undefined || cue.stageZ === null ? 1 : Number(cue.stageZ)
+					},
 					targetScreens: cue.targetScreens || 'all'
 				}, true);
 			}
@@ -1573,20 +1682,22 @@ export function GetCueCompanionWebUiHtml(): string {
 				op = Math.min(op, Math.max(0, rem / fadeOut));
 			}
 		}
-		// Also scale visual opacity if a Fade cue or Panic fade is actively fading this video cue down to -60 dB
-		if (cue.currentVolumeDb !== undefined && cue.volumeDb !== undefined && cue.currentVolumeDb < cue.volumeDb - 0.5) {
-			const span = Math.max(1, (cue.volumeDb ?? 0) - -60);
-			const faderRatio = Math.max(0, Math.min(1, (cue.currentVolumeDb - -60) / span));
-			op = Math.min(op, faderRatio);
-		}
 		return Number(op.toFixed(3));
 	}
 
 	function syncAudioEngineWithState(prevCues, nextCues) {
+		const backgroundLive = nextCues.some((c) => c.type === 'background' && (c.state === 'running' || c.state === 'paused'));
+		if (panicHold && !backgroundLive) {
+			panicHold = false;
+			for (const [id, entry] of [...activeAudioNodes.entries()]) {
+				if (entry.isBackground) activeAudioNodes.delete(id);
+			}
+		}
 		const prevMap = new Map(prevCues.map(c => [c.id, c]));
 		for (const cue of nextCues) {
 			const prev = prevMap.get(cue.id);
 			if (cue.type === 'background') {
+				if (panicHold) continue;
 				if ((cue.state === 'running' || cue.state === 'paused') && !activeAudioNodes.has(cue.id)) {
 					startBackgroundCue(cue);
 				} else if (cue.state === 'idle' && activeAudioNodes.has(cue.id)) {
@@ -1875,7 +1986,7 @@ export function GetCueCompanionWebUiHtml(): string {
 		// Multi-selection bulk inspector
 		if (selectedCueIds.size > 1) {
 			document.getElementById('inspSelectedTitle').textContent = selectedCueIds.size + ' Cues Selected (Bulk Edit)';
-			const groupOptions = '<option value="">(Move to Root Level)</option>' +
+			const groupOptions = '<option value="">Move out to root level</option>' +
 				cues.filter(g => g.type === 'group' && !selectedCueIds.has(g.id))
 					.map(g => '<option value="' + g.id + '">Group Q ' + g.qNumber + ': ' + g.name + '</option>').join('');
 
@@ -1886,7 +1997,7 @@ export function GetCueCompanionWebUiHtml(): string {
 						<button class="tool-btn" onclick="addCue('group')">📁 Wrap \${selectedCueIds.size} Cues in New Group</button>
 					</div>
 					<div class="field">
-						<label>Move Selected Cues into Existing Group</label>
+						<label>Move selected cues into or out of a group</label>
 						<select onchange="batchAssignGroup(this.value)">
 							<option value="__none__">-- Choose Group --</option>
 							\${groupOptions}
@@ -1911,7 +2022,7 @@ export function GetCueCompanionWebUiHtml(): string {
 		if (selectedCueIds.size === 0) selectedCueIds.add(cue.id);
 		document.getElementById('inspSelectedTitle').textContent = 'Inspecting: Q ' + cue.qNumber + ' — ' + cue.name + ' (' + cue.type.toUpperCase() + ' | TRT: ' + formatTime(cue.duration) + ')';
 
-		const groupOptions = '<option value="">(Root Level)</option>' +
+		const groupOptions = '<option value="">Move out to root level</option>' +
 			cues.filter(g => g.type === 'group' && g.id !== cue.id)
 				.map(g => '<option value="' + g.id + '" ' + (cue.parentId === g.id ? 'selected' : '') + '>Group Q ' + g.qNumber + ': ' + g.name + '</option>').join('');
 
@@ -1957,7 +2068,7 @@ export function GetCueCompanionWebUiHtml(): string {
 						</select>
 					</div>
 					<div class="field">
-						<label>Parent Group</label>
+						<label>Group</label>
 						<select onchange="updateCueField('\${cue.id}', 'parentId', this.value || null)">\${groupOptions}</select>
 					</div>
 					\${(cue.type === 'audio' || cue.type === 'video') ? \`
@@ -1967,6 +2078,35 @@ export function GetCueCompanionWebUiHtml(): string {
 							<option value="">-- Choose Media or Upload Above --</option>
 							\${mediaPresetOptions}
 						</select>
+					</div>\` : ''}
+					\${(cue.type === 'video') ? \`
+					<div class="field">
+						<label>Stage X (%)</label>
+						<input type="number" step="0.1" value="\${cue.stageX ?? 0}" onchange="updateCueField('\${cue.id}', 'stageX', Number(this.value))" />
+					</div>
+					<div class="field">
+						<label>Stage Y (%)</label>
+						<input type="number" step="0.1" value="\${cue.stageY ?? 0}" onchange="updateCueField('\${cue.id}', 'stageY', Number(this.value))" />
+					</div>
+					<div class="field">
+						<label>Width (%)</label>
+						<input type="number" step="0.1" min="1" value="\${cue.stageWidth ?? 100}" onchange="updateCueField('\${cue.id}', 'stageWidth', Number(this.value))" />
+					</div>
+					<div class="field">
+						<label>Height (%)</label>
+						<input type="number" step="0.1" min="1" value="\${cue.stageHeight ?? 100}" onchange="updateCueField('\${cue.id}', 'stageHeight', Number(this.value))" />
+					</div>
+					<div class="field">
+						<label>Rotation (degrees)</label>
+						<input type="number" step="1" value="\${cue.stageRotate ?? 0}" onchange="updateCueField('\${cue.id}', 'stageRotate', Number(this.value))" />
+					</div>
+					<div class="field">
+						<label>Stacking order</label>
+						<input type="number" step="1" value="\${cue.stageZ ?? 1}" onchange="updateCueField('\${cue.id}', 'stageZ', Number(this.value))" />
+					</div>
+					<div class="field span-2">
+						<label>Layer notes</label>
+						<div style="font-size:11px;color:var(--text-muted);line-height:1.4;">X and Y are the top-left of the frame, as a percent of the screen. Full screen is 0, 0, 100, 100. A higher stacking order draws on top. GO keeps other videos playing, so a second cue can sit beside or over the first. WebM files with an alpha channel stay transparent over whatever is behind them.</div>
 					</div>\` : ''}
 					\${(cue.type === 'video' || cue.type === 'background') ? \`
 					<div class="field">
@@ -2095,13 +2235,28 @@ export function GetCueCompanionWebUiHtml(): string {
 						<label>Post-Wait (s)</label>
 						<input type="number" step="0.1" min="0" value="\${cue.postWait}" onchange="updateCueField('\${cue.id}', 'postWait', Number(this.value))" />
 					</div>
+					\${cue.type === 'video' ? \`
+					<div class="field">
+						<label>Video Fade In / Out (s)</label>
+						<div class="field-row">
+							<input type="number" step="0.1" min="0" value="\${cue.fadeIn || 0}" placeholder="In" onchange="updateCueField('\${cue.id}', 'fadeIn', Number(this.value))" />
+							<input type="number" step="0.1" min="0" value="\${cue.fadeOut || 0}" placeholder="Out" onchange="updateCueField('\${cue.id}', 'fadeOut', Number(this.value))" />
+						</div>
+					</div>
+					<div class="field">
+						<label>Audio Fade In / Out (s)</label>
+						<div class="field-row">
+							<input type="number" step="0.1" min="0" value="\${cue.audioFadeIn ?? cue.fadeIn ?? 0}" placeholder="In" onchange="updateCueField('\${cue.id}', 'audioFadeIn', Number(this.value))" />
+							<input type="number" step="0.1" min="0" value="\${cue.audioFadeOut ?? cue.fadeOut ?? 0}" placeholder="Out" onchange="updateCueField('\${cue.id}', 'audioFadeOut', Number(this.value))" />
+						</div>
+					</div>\` : \`
 					<div class="field">
 						<label>Fade In / Out (s)</label>
 						<div class="field-row">
 							<input type="number" step="0.1" min="0" value="\${cue.fadeIn || 0}" placeholder="In" onchange="updateCueField('\${cue.id}', 'fadeIn', Number(this.value))" />
 							<input type="number" step="0.1" min="0" value="\${cue.fadeOut || 0}" placeholder="Out" onchange="updateCueField('\${cue.id}', 'fadeOut', Number(this.value))" />
 						</div>
-					</div>
+					</div>\`}
 					<div class="field">
 						<label>Continue Mode</label>
 						<select onchange="updateCueField('\${cue.id}', 'continueMode', this.value)">
@@ -2387,7 +2542,13 @@ export function GetCueCompanionWebUiHtml(): string {
 			setTimeout(() => btn.classList.remove('flash'), 120);
 		}
 		if (action === 'panic') {
-			for (const id of activeAudioNodes.keys()) stopWebAudioForCue(id);
+			panicHold = true;
+			broadcastToStage({ type: 'stop_video', all: true, targetScreens: 'all' });
+			broadcastToStage({ type: 'clear_background', all: true, targetScreens: 'all' });
+			for (const [id, entry] of [...activeAudioNodes.entries()]) {
+				if (entry.isBackground) continue;
+				stopWebAudioForCue(id);
+			}
 		}
 		apiPost('/api/transport', { action });
 	}
@@ -2871,6 +3032,11 @@ export function GetCueCompanionWebUiHtml(): string {
 					const kioskNote = document.getElementById('stageKioskStatus');
 					if (kioskNote) kioskNote.textContent = payload.kioskMessage;
 				}
+				if (Array.isArray(payload.audioOutputs)) audioOutputs = payload.audioOutputs;
+				if (typeof payload.audioOutputId === 'string' && payload.audioOutputId) audioOutputId = payload.audioOutputId;
+				if (typeof payload.audioMessage === 'string') audioMessage = payload.audioMessage;
+				const audioModal = document.getElementById('audioManagerModal');
+				if (audioModal && audioModal.classList.contains('open') && audioListKey() !== audioRenderKey) renderAudioModal();
 
 				if (!selectedCueId && standbyCueId) {
 					selectedCueId = standbyCueId;
@@ -2910,6 +3076,24 @@ export function GetVideoStageHtml(): string {
 <head>
 <meta charset="UTF-8" />
 <title>Cue Companion Stage Output</title>
+<script>if (location.search.indexOf('pi=1') !== -1) {
+	document.documentElement.classList.add('pi-stage');
+	if (location.search.indexOf('cursor=1') === -1) {
+		var cursorArmed = false;
+		var applyBlankCursor = function() {
+			if (cursorArmed) return;
+			cursorArmed = true;
+			var next = new URL(location.href);
+			next.searchParams.set('cursor', '1');
+			location.replace(next.href);
+		};
+		var blankCursor = new Image();
+		blankCursor.onload = applyBlankCursor;
+		blankCursor.onerror = applyBlankCursor;
+		blankCursor.src = '/blank-cursor.png';
+		setTimeout(applyBlankCursor, 1200);
+	}
+}</script>
 <style>
 	* { box-sizing: border-box; }
 	html, body {
@@ -2922,6 +3106,12 @@ export function GetVideoStageHtml(): string {
 		user-select: none;
 		cursor: none;
 	}
+	html.pi-stage,
+	html.pi-stage *,
+	html.pi-stage body.show-cursor,
+	html.pi-stage body.show-cursor * {
+		cursor: url("/blank-cursor.png") 0 0, none !important;
+	}
 	body.show-cursor {
 		cursor: default;
 	}
@@ -2932,19 +3122,20 @@ export function GetVideoStageHtml(): string {
 		height: 100vh;
 		background: #000000;
 		z-index: 1;
-		transition: background 0.35s ease, opacity 0.35s ease;
 	}
-	video#stageVideo {
+	#stageLayers {
 		position: fixed;
 		inset: 0;
-		width: 100vw;
-		height: 100vh;
-		object-fit: contain;
 		z-index: 2;
-		display: none;
+		pointer-events: none;
 		background: transparent;
-		opacity: 1;
-		transition: opacity 0.06s linear;
+	}
+	#stageLayers video {
+		position: absolute;
+		object-fit: contain;
+		background: transparent;
+		transform-origin: center center;
+		display: none;
 	}
 	#stageError {
 		position: fixed;
@@ -2987,7 +3178,7 @@ export function GetVideoStageHtml(): string {
 </head>
 <body ondblclick="enterStageFullscreen()">
 	<div id="bgLayer"></div>
-	<video id="stageVideo" playsinline preload="auto"></video>
+	<div id="stageLayers"></div>
 	<div id="stageError"></div>
 	<button id="fsButtonOverlay" onclick="enterStageFullscreen()">⛶ Enter Fullscreen</button>
 	<script>
@@ -3015,32 +3206,222 @@ export function GetVideoStageHtml(): string {
 			el.style.display = 'block';
 		}
 
-		function applyStageAudio(msg) {
-			const gain = msg && msg.volume !== undefined ? Number(msg.volume) : vid.volume;
+		function applyStageAudio(el, msg) {
+			const gain = msg && msg.volume !== undefined ? Number(msg.volume) : el.volume;
 			const level = Math.max(0, Math.min(1, Number.isFinite(gain) ? gain : 1));
-			vid.volume = level;
-			vid.muted = level <= 0.001;
+			el.volume = level;
+			el.muted = level <= 0.001;
+			applyStageSink(el);
 		}
 
 		const bgLayer = document.getElementById('bgLayer');
-		const vid = document.getElementById('stageVideo');
-		let activeVideoCueId = null;
-		let currentVideoEndTime = 0;
-		let currentVideoStartTime = 0;
-		let currentVideoFadeIn = 0;
-		let currentVideoFadeOut = 0;
-		let currentVideoLoop = false;
-		let currentVideoPauseAtEnd = false;
+		const stageLayers = document.getElementById('stageLayers');
+		const videoLayers = new Map();
+		let stageSinkId = '';
 		let cursorTimer = null;
 
-		vid.onerror = () => {
-			const detail = 'code=' + (vid.error ? vid.error.code : 'none') + ' msg=' + (vid.error ? vid.error.message : '') + ' src=' + vid.currentSrc;
-			stageLog('VIDEO ERROR: ' + detail);
-			showStageError('This cue did not play. The video file is missing or incomplete.');
-		};
-		vid.onplaying = () => showStageError('');
+		function applyStageSink(el) {
+			if (!el || typeof el.setSinkId !== 'function') return;
+			const sink = stageSinkId || '';
+			el.setSinkId(sink).catch(() => {});
+		}
+
+		function reportStageAudioDevices() {
+			if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+			navigator.mediaDevices.enumerateDevices().then((list) => {
+				const devices = list.filter((device) => device.kind === 'audiooutput').map((device) => ({
+					deviceId: device.deviceId,
+					label: device.label || ''
+				}));
+				fetch('/api/audio/browser-devices', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ devices })
+				}).catch(() => {});
+			}).catch(() => {});
+		}
+
+		function isPiStage() {
+			if (params.get('pi') === '1') return true;
+			const ua = (navigator.userAgent || '') + ' ' + (navigator.platform || '');
+			if (/Windows/i.test(ua)) return false;
+			return /Linux/i.test(ua) && /arm|aarch64/i.test(ua);
+		}
+
+		function layoutFromMessage(msg) {
+			const layout = msg && msg.layout ? msg.layout : {};
+			const num = (value, fallback) => {
+				const n = Number(value);
+				return Number.isFinite(n) ? n : fallback;
+			};
+			return {
+				x: num(layout.x, 0),
+				y: num(layout.y, 0),
+				width: layout.width === undefined || layout.width === null ? 100 : num(layout.width, 100),
+				height: layout.height === undefined || layout.height === null ? 100 : num(layout.height, 100),
+				rotate: num(layout.rotate, 0),
+				z: layout.z === undefined || layout.z === null ? 1 : num(layout.z, 1),
+			};
+		}
+
+		function applyLayerLayout(el, layout) {
+			el.style.left = layout.x + '%';
+			el.style.top = layout.y + '%';
+			el.style.width = layout.width + '%';
+			el.style.height = layout.height + '%';
+			el.style.transform = 'rotate(' + layout.rotate + 'deg)';
+			el.style.zIndex = String(layout.z);
+		}
+
+		function releaseLayer(layer) {
+			layer.gen += 1;
+			layer.live = false;
+			layer.el.muted = true;
+			layer.el.volume = 0;
+			try { layer.el.pause(); } catch (e) {}
+			if (isPiStage()) {
+				try {
+					layer.el.removeAttribute('src');
+					layer.el.load();
+				} catch (e) {}
+			}
+			layer.el.removeAttribute('data-url');
+			layer.el.style.opacity = '0';
+			layer.el.style.display = 'none';
+		}
+
+		function ensureLayer(cueId) {
+			const id = String(cueId || 'stage');
+			let layer = videoLayers.get(id);
+			if (layer) return layer;
+			const el = document.createElement('video');
+			el.setAttribute('playsinline', '');
+			el.playsInline = true;
+			el.preload = 'auto';
+			el.loop = false;
+			el.style.position = 'absolute';
+			el.style.objectFit = 'contain';
+			el.style.background = 'transparent';
+			el.style.transformOrigin = 'center center';
+			el.style.display = 'none';
+			el.style.opacity = '0';
+			stageLayers.appendChild(el);
+			layer = {
+				id: id,
+				el: el,
+				live: false,
+				gen: 0,
+				startTime: 0,
+				endTime: 0,
+				fadeIn: 0,
+				fadeOut: 0,
+				loop: false,
+				pauseAtEnd: false,
+			};
+			el.addEventListener('play', () => {
+				if (isPiStage() && !layer.live) {
+					try { el.pause(); } catch (e) {}
+					el.muted = true;
+					el.volume = 0;
+				}
+			});
+			el.addEventListener('error', () => {
+				if (!layer.live) return;
+				const detail = 'code=' + (el.error ? el.error.code : 'none') + ' src=' + el.currentSrc;
+				stageLog('VIDEO ERROR: ' + detail);
+				showStageError('This cue did not play. The video file is missing or incomplete.');
+			});
+			el.addEventListener('playing', () => showStageError(''));
+			el.addEventListener('timeupdate', () => {
+				if (isPiStage() && !layer.live) return;
+				const elapsed = Math.max(0, el.currentTime - layer.startTime);
+				const dur = layer.endTime > layer.startTime ? (layer.endTime - layer.startTime) : Math.max(0, (el.duration || 0) - layer.startTime);
+				if (layer.fadeIn > 0 && elapsed < layer.fadeIn) {
+					el.style.opacity = String(Math.max(0, Math.min(1, elapsed / layer.fadeIn)));
+				} else if (!layer.loop && layer.fadeOut > 0 && dur > 0 && (dur - elapsed) <= layer.fadeOut) {
+					el.style.opacity = String(Math.max(0, Math.min(1, (dur - elapsed) / layer.fadeOut)));
+				}
+				if (layer.endTime > layer.startTime && el.currentTime >= layer.endTime) {
+					if (layer.loop) {
+						el.currentTime = layer.startTime;
+						el.play().catch(() => {});
+					} else if (layer.pauseAtEnd) {
+						el.pause();
+						if (!isPiStage()) el.currentTime = Math.max(layer.startTime, layer.endTime - 0.04);
+					} else {
+						releaseLayer(layer);
+					}
+				}
+			});
+			el.addEventListener('ended', () => {
+				if (isPiStage() && !layer.live) return;
+				if (layer.loop) {
+					el.currentTime = layer.startTime;
+					el.play().catch(() => {});
+				} else if (layer.pauseAtEnd) {
+					el.pause();
+				} else {
+					releaseLayer(layer);
+				}
+			});
+			videoLayers.set(id, layer);
+			return layer;
+		}
+
+		function playLayer(layer, msg) {
+			const el = layer.el;
+			const playGen = layer.gen;
+			const seekTo = msg.currentTime !== undefined ? Number(msg.currentTime) : layer.startTime;
+			const startPlayback = () => {
+				if (playGen !== layer.gen || !layer.live) return;
+				try {
+					if (Math.abs(el.currentTime - seekTo) > 0.15) el.currentTime = seekTo;
+				} catch (e) {
+					stageLog('Seek error: ' + e);
+				}
+				if (msg.paused) {
+					el.pause();
+					return;
+				}
+				const p = el.play();
+				if (p && p.then) p.then(() => {
+					if (playGen !== layer.gen || !layer.live) {
+						try { el.pause(); } catch (err) {}
+						el.muted = true;
+						el.volume = 0;
+					}
+				});
+				if (p && p.catch) {
+					p.catch(err => {
+						if (playGen !== layer.gen || !layer.live) return;
+						stageLog('vid.play() rejected: ' + err);
+						showStageError('This cue did not play. The video file is missing or incomplete.');
+					});
+				}
+			};
+			if (el.getAttribute('data-url') !== msg.url) {
+				el.setAttribute('data-url', msg.url);
+				el.addEventListener('loadedmetadata', function onMeta() {
+					el.removeEventListener('loadedmetadata', onMeta);
+					startPlayback();
+				});
+				el.src = msg.url;
+				const p = el.play();
+				if (p && p.catch) p.catch(() => {});
+			} else if (el.readyState >= 1) {
+				startPlayback();
+			} else {
+				el.addEventListener('loadedmetadata', function onMeta() {
+					el.removeEventListener('loadedmetadata', onMeta);
+					startPlayback();
+				});
+				const p = el.play();
+				if (p && p.catch) p.catch(() => {});
+			}
+		}
 
 		window.addEventListener('mousemove', () => {
+			if (isPiStage()) return;
 			document.body.classList.add('show-cursor');
 			if (cursorTimer) clearTimeout(cursorTimer);
 			cursorTimer = setTimeout(() => document.body.classList.remove('show-cursor'), 1800);
@@ -3068,50 +3449,45 @@ export function GetVideoStageHtml(): string {
 			return parts.includes(myScreenIdx);
 		}
 
-		vid.ontimeupdate = () => {
-			const elapsed = Math.max(0, vid.currentTime - currentVideoStartTime);
-			const dur = currentVideoEndTime > currentVideoStartTime ? (currentVideoEndTime - currentVideoStartTime) : Math.max(0, (vid.duration || 0) - currentVideoStartTime);
-			let localOp = 1.0;
-			if (currentVideoFadeIn > 0 && elapsed < currentVideoFadeIn) {
-				localOp = Math.max(0, Math.min(1, elapsed / currentVideoFadeIn));
-				vid.style.opacity = String(localOp);
-			} else if (!currentVideoLoop && currentVideoFadeOut > 0 && dur > 0 && (dur - elapsed) <= currentVideoFadeOut) {
-				localOp = Math.max(0, Math.min(1, (dur - elapsed) / currentVideoFadeOut));
-				vid.style.opacity = String(localOp);
-			}
+		function blackoutBackground() {
+			bgLayer.style.transition = 'none';
+			bgLayer.style.opacity = '0';
+			bgLayer.style.backgroundImage = 'none';
+			bgLayer.style.backgroundColor = '#000000';
+		}
 
-			if (currentVideoEndTime > currentVideoStartTime && vid.currentTime >= currentVideoEndTime) {
-				if (currentVideoLoop) {
-					vid.currentTime = currentVideoStartTime;
-					vid.play().catch(() => {});
-				} else if (currentVideoPauseAtEnd) {
-					vid.pause();
-					vid.currentTime = Math.max(currentVideoStartTime, currentVideoEndTime - 0.04);
-				} else {
-					vid.pause();
-					vid.currentTime = currentVideoStartTime;
-					vid.style.opacity = '0';
-					vid.style.display = 'none';
-				}
-			}
-		};
-
-		vid.onended = () => {
-			if (currentVideoLoop) {
-				vid.currentTime = currentVideoStartTime;
-				vid.play().catch(() => {});
-			} else if (currentVideoPauseAtEnd) {
-				vid.pause();
+		function showBackground(css, fadeIn) {
+			const value = css || '#000000';
+			const isGradient = String(value).indexOf('gradient') !== -1;
+			bgLayer.style.backgroundImage = isGradient ? value : 'none';
+			bgLayer.style.backgroundColor = isGradient ? '#000000' : value;
+			const fade = Number(fadeIn) || 0;
+			if (fade > 0) {
+				bgLayer.style.transition = 'none';
+				bgLayer.style.opacity = '0';
+				void bgLayer.offsetWidth;
+				bgLayer.style.transition = 'opacity ' + fade + 's ease';
+				bgLayer.style.opacity = '1';
 			} else {
-				vid.pause();
-				vid.currentTime = currentVideoStartTime;
-				vid.style.opacity = '0';
-				vid.style.display = 'none';
+				bgLayer.style.transition = 'none';
+				bgLayer.style.opacity = '1';
 			}
-		};
+		}
 
 		function handleStageMessage(msg) {
 			if (!msg || !msg.type) return;
+			if ((msg.type === 'stop_video' && (msg.all || !msg.cueId)) || (msg.type === 'clear_background' && msg.all)) {
+				for (const layer of videoLayers.values()) releaseLayer(layer);
+				blackoutBackground();
+				stageLog('Stage blackout');
+				return;
+			}
+			if (msg.type === 'set_audio_output') {
+				stageSinkId = msg.sinkId || '';
+				for (const layer of videoLayers.values()) applyStageSink(layer.el);
+				stageLog('Audio output ' + (msg.label || stageSinkId || 'system default'));
+				return;
+			}
 			if (msg.targetScreens && !isTargetedForThisScreen(msg.targetScreens)) {
 				stageLog('Ignored msg ' + msg.type + ' for targetScreens=' + msg.targetScreens);
 				return;
@@ -3120,101 +3496,70 @@ export function GetVideoStageHtml(): string {
 			if (msg.type === 'request_fullscreen') {
 				enterStageFullscreen();
 			} else if (msg.type === 'set_background') {
-				bgLayer.style.transition = msg.fadeIn > 0 ? ('background ' + msg.fadeIn + 's ease') : 'none';
-				bgLayer.style.background = msg.css || '#000000';
+				showBackground(msg.css, msg.fadeIn);
 			} else if (msg.type === 'clear_background') {
-				bgLayer.style.background = '#000000';
+				blackoutBackground();
+			} else if (msg.type === 'video_layout') {
+				const layer = videoLayers.get(String(msg.cueId || ''));
+				if (!layer) return;
+				applyLayerLayout(layer.el, layoutFromMessage(msg));
 			} else if (msg.type === 'play_video') {
-				stageLog('Received play_video: cueId=' + msg.cueId + ' url=' + msg.url + ' startTime=' + msg.startTime + ' opacity=' + msg.opacity);
-				activeVideoCueId = msg.cueId || null;
-				currentVideoStartTime = Number(msg.startTime) || 0;
-				currentVideoEndTime = Number(msg.endTime) || 0;
-				currentVideoFadeIn = Number(msg.fadeIn) || 0;
-				currentVideoFadeOut = Number(msg.fadeOut) || 0;
-				currentVideoLoop = !!msg.loop;
-				currentVideoPauseAtEnd = !!msg.pauseAtEnd;
-				applyStageAudio(msg);
-				vid.loop = false;
-				vid.style.opacity = String(msg.opacity !== undefined ? msg.opacity : (currentVideoFadeIn > 0 ? 0 : 1));
-				vid.style.display = 'block';
-				const seekTo = msg.currentTime !== undefined ? Number(msg.currentTime) : currentVideoStartTime;
-				const applySeekAndPlay = () => {
-					if (activeVideoCueId !== msg.cueId) return;
-					try {
-						if (Math.abs(vid.currentTime - seekTo) > 0.15) {
-							vid.currentTime = seekTo;
-						}
-					} catch (e) {
-						stageLog('Seek error: ' + e);
-					}
-					if (msg.paused) {
-						vid.pause();
-					} else {
-						const p = vid.play();
-						if (p && p.catch) {
-							p.catch(err => {
-								stageLog('vid.play() rejected: ' + err);
-								showStageError('This cue did not play. The video file is missing or incomplete.');
-							});
-						}
-					}
-				};
-				if (vid.getAttribute('data-url') !== msg.url) {
-					vid.setAttribute('data-url', msg.url);
-					vid.addEventListener('loadedmetadata', function onMeta() {
-						vid.removeEventListener('loadedmetadata', onMeta);
-						applySeekAndPlay();
-					});
-					vid.src = msg.url;
-					const p = vid.play();
-					if (p && p.catch) p.catch(() => {});
-				} else if (vid.readyState >= 1) {
-					applySeekAndPlay();
-				} else {
-					vid.addEventListener('loadedmetadata', function onMeta() {
-						vid.removeEventListener('loadedmetadata', onMeta);
-						applySeekAndPlay();
-					});
-					const p = vid.play();
-					if (p && p.catch) p.catch(() => {});
-				}
+				stageLog('Received play_video: cueId=' + msg.cueId + ' url=' + msg.url);
+				const layer = ensureLayer(msg.cueId);
+				const sameClip = layer.live && layer.el.getAttribute('data-url') === msg.url;
+				if (!sameClip) layer.gen += 1;
+				layer.live = true;
+				layer.startTime = Number(msg.startTime) || 0;
+				layer.endTime = Number(msg.endTime) || 0;
+				layer.fadeIn = Number(msg.fadeIn) || 0;
+				layer.fadeOut = Number(msg.fadeOut) || 0;
+				layer.loop = !!msg.loop;
+				layer.pauseAtEnd = !!msg.pauseAtEnd;
+				applyLayerLayout(layer.el, layoutFromMessage(msg));
+				applyStageAudio(layer.el, msg);
+				layer.el.loop = false;
+				layer.el.style.opacity = String(msg.opacity !== undefined ? msg.opacity : (layer.fadeIn > 0 ? 0 : 1));
+				layer.el.style.display = 'block';
+				if (!sameClip) playLayer(layer, msg);
 			} else if (msg.type === 'video_opacity') {
-				if (msg.cueId && activeVideoCueId && msg.cueId !== activeVideoCueId) return;
-				if (msg.opacity !== undefined) {
-					vid.style.opacity = String(msg.opacity);
-				}
-				if (msg.volume !== undefined) applyStageAudio(msg);
+				const layer = videoLayers.get(String(msg.cueId || ''));
+				if (!layer || !layer.live) return;
+				if (msg.opacity !== undefined) layer.el.style.opacity = String(msg.opacity);
+				if (msg.volume !== undefined) applyStageAudio(layer.el, msg);
 			} else if (msg.type === 'scrub_video') {
-				if (msg.url) {
-					activeVideoCueId = msg.cueId || activeVideoCueId;
-					applyStageAudio(msg);
-					vid.style.opacity = '1';
-					vid.style.display = 'block';
-					if (vid.getAttribute('data-url') !== msg.url) {
-						vid.setAttribute('data-url', msg.url);
-						vid.src = msg.url;
-					}
-					try { vid.currentTime = Number(msg.currentTime) || 0; } catch {}
+				if (!msg.url) return;
+				const layer = ensureLayer(msg.cueId);
+				layer.live = true;
+				applyLayerLayout(layer.el, layoutFromMessage(msg));
+				applyStageAudio(layer.el, msg);
+				layer.el.style.opacity = '1';
+				layer.el.style.display = 'block';
+				if (layer.el.getAttribute('data-url') !== msg.url) {
+					layer.el.setAttribute('data-url', msg.url);
+					layer.el.src = msg.url;
 				}
+				try { layer.el.currentTime = Number(msg.currentTime) || 0; } catch (e) {}
 			} else if (msg.type === 'pause_video') {
-				if (msg.cueId && activeVideoCueId && msg.cueId !== activeVideoCueId) return;
-				vid.pause();
+				const layer = videoLayers.get(String(msg.cueId || ''));
+				if (!layer) return;
+				layer.el.pause();
 			} else if (msg.type === 'resume_video') {
-				if (msg.cueId && activeVideoCueId && msg.cueId !== activeVideoCueId) return;
-				applyStageAudio(msg);
-				vid.style.display = 'block';
-				vid.play().catch(err => stageLog('resume play rejected: ' + err));
+				const layer = videoLayers.get(String(msg.cueId || ''));
+				if (!layer) return;
+				layer.live = true;
+				applyStageAudio(layer.el, msg);
+				layer.el.style.display = 'block';
+				layer.el.play().catch(err => stageLog('resume play rejected: ' + err));
 			} else if (msg.type === 'stop_video') {
-				if (msg.cueId && activeVideoCueId && msg.cueId !== activeVideoCueId) {
-					stageLog('Ignored stop_video for older cueId=' + msg.cueId + ' (active=' + activeVideoCueId + ')');
+				stageLog('Stopping video cueId=' + (msg.all ? 'all' : msg.cueId));
+				if (msg.all || !msg.cueId) {
+					for (const layer of videoLayers.values()) releaseLayer(layer);
+					blackoutBackground();
 					return;
 				}
-				stageLog('Stopping video cueId=' + msg.cueId);
-				activeVideoCueId = null;
-				vid.pause();
-				try { vid.currentTime = Number(msg.resetTime) || currentVideoStartTime || 0; } catch {}
-				vid.style.opacity = '0';
-				vid.style.display = 'none';
+				const layer = videoLayers.get(String(msg.cueId));
+				if (!layer) return;
+				releaseLayer(layer);
 			}
 		}
 
@@ -3239,6 +3584,10 @@ export function GetVideoStageHtml(): string {
 			};
 		}
 		connectStageSse();
+		reportStageAudioDevices();
+		if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+			navigator.mediaDevices.addEventListener('devicechange', reportStageAudioDevices);
+		}
 	</script>
 </body>
 </html>`

@@ -50,6 +50,8 @@ export interface Cue {
 	loopMode?: PlaybackLoopMode // 'one_shot' | 'infinite_loop' | 'pause_at_end' (Pause at Last Frame)
 	fadeIn: number
 	fadeOut: number
+	audioFadeIn?: number // Video cues: sound fade, separate from the picture fade
+	audioFadeOut?: number
 
 	// Background Cue properties (solid color or gradient on Video Stage)
 	bgStyle?: 'solid' | 'linear-gradient' | 'radial-gradient'
@@ -59,6 +61,14 @@ export interface Cue {
 
 	// Video / Display Screen Routing
 	targetScreens?: string // 'all' or comma-separated screen indices e.g. '0', '1', '0,1'
+
+	// Stage layout, percent of the screen. Defaults are a full-frame layer.
+	stageX?: number
+	stageY?: number
+	stageWidth?: number
+	stageHeight?: number
+	stageRotate?: number // degrees
+	stageZ?: number
 
 	// Target Cue ID (for Fade, Stop, Goto cues)
 	targetCueId: string
