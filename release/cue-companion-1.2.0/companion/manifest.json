@@ -1,0 +1,41 @@
+{
+	"id": "cue-companion",
+	"name": "Cue Companion",
+	"shortname": "CueCompanion",
+	"description": "Cue Companion — Advanced audio, video, background, and show-control cue playlist engine with built-in Web Workspace UI",
+	"version": "1.2.0",
+	"isPrerelease": false,
+	"license": "MIT",
+	"repository": "git+https://github.com/trigx300/companion-module-cue-companion.git",
+	"bugs": "https://github.com/trigx300/companion-module-cue-companion/issues",
+	"maintainers": [
+		{
+			"name": "David Giardinelli",
+			"email": "trigx300@gmail.com"
+		}
+	],
+	"runtime": {
+		"type": "node22",
+		"api": "nodejs-ipc",
+		"apiVersion": "1.14.0",
+		"entrypoint": "../main.js",
+		"permissions": {
+			"filesystem": true,
+			"child-process": true
+		}
+	},
+	"legacyIds": [],
+	"manufacturer": "Cue Companion",
+	"products": [
+		"Cue Companion"
+	],
+	"keywords": [
+		"Cue Companion",
+		"Playlist",
+		"Cue",
+		"Audio",
+		"Video",
+		"Playback",
+		"Show Control"
+	]
+}
